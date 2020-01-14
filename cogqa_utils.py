@@ -141,7 +141,7 @@ def find_start_end_after_tokenized(tokenizer, tokenized_text, spans: ['Obama Car
         ret.append((bisect_left(end_offset, start), bisect_left(end_offset, end)))
     return ret
     
-def find_start_end_before_tokenized(tokenizer, orig_text, spans: [['Oba', '##ma', 'Care'], ['2006']]):
+def find_start_end_before_tokenized(tokenizer, orig_text, span: 'Obama[unk]care'):
     """Find start and end positions of tokenized spans in untokenized text.
     
     Args:
@@ -151,24 +151,15 @@ def find_start_end_before_tokenized(tokenizer, orig_text, spans: [['Oba', '##ma'
     Returns:
         list: List of (start position, end position).
     """
-    ret = []
-    orig_text = orig_text.lower()
-    for span_pieces in spans:
-        if len(span_pieces) == 0:
-            ret.append((0, 0))
-            continue
-        span = tokenizer.convert_tokens_to_string(span_pieces)
-        start = orig_text.find(span)
-        if start >= 0:
-            end = start + len(span) # exclude end
-        else:
-            result = fuzzy_find([span], orig_text)
-            if len(result) == 0 and span.find(tokenizer.unk_token) > 0:
-                span = span.replace(tokenizer.unk_token, '')
-                result = fuzzy_find([span], orig_text)
-            if len(result) == 0:
-                ret.append((0,0))
-                continue
-            _, _, start, end = result[0]
-        ret.append((start, end))
-    return ret
+    if span.find(tokenizer.unk_token) > 0:
+        span = span.replace(tokenizer.unk_token, '')
+    # orig_text = orig_text.lower()
+    start = orig_text.find(span)
+    if start >= 0:
+        end = start + len(span) # exclude end
+    else:
+        result = fuzzy_find([span], orig_text)
+        if len(result) == 0:
+            return None
+        _, _, start, end = result[0]
+    return start, end

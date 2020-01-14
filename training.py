@@ -73,10 +73,20 @@ def infer_QA_reason(reasoner, buf, device, top_k=3):
             ret.append((adds + start_logits[start_pos] + end_logits[end_pos], start_pos, end_pos))
     ret.sort(reverse=True)
 
-    # backtrace
-    start_pos, end_pos = ret[0][1], ret[0][2] + 1
-    
-    return inputs[0, 0, start_pos:end_pos]
+    start_pos, end_pos = ret[0][1], ret[0][2]
+    # # backtrace
+    # start_blk, end_blk = None, None
+    # for i, end in enumerate(buf.block_ends()):
+    #     if start_blk is None and start_pos < end:
+    #         start_blk = i
+    #     if end_blk is None and end_pos < end:
+    #         end_blk = i
+    # if hasattr(start_blk, 'origin'):
+    #     origins = list(set([buf[i].origin for i in range(start_blk, end_blk + 1)]))
+    # else:
+    #     origins = []
+    # return inputs[0, 0, start_pos: end_pos + 1], origins
+    return inputs[0, 0, start_pos: end_pos + 1]
 
 def infer_replay(kenc, qenc, introspector, dbuf, qbuf, times=[2,2,1,1,1], device):
     '''

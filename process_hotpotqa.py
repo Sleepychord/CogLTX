@@ -18,11 +18,11 @@ def process(DATA_PATH, HOTPOTQA_PATH, suffix='train'):
     for data in tqdm(dataset):
         try:
             flag_ans = False
-            question = [tokenizer.cls_token] + tokenizer.tokenize(data['question']) + ['yes', 'no', tokenizer.sep_token]
+            question = [tokenizer.cls_token] + tokenizer.tokenize('yes no ' + data['question']) + [tokenizer.sep_token]
             q, q_property = [question], [[('relevance', 1), ('blk_type', 0)]]
             if suffix != 'test':
                 if data['answer'] in ['yes', 'no']:
-                    pos = len(question) - 2 - (data['answer'] == 'yes')
+                    pos = 1 + (data['answer'] == 'no')
                     q_property[0].extend([('start', pos), ('end', pos)])
                     flag_ans = True
             else:
@@ -57,8 +57,10 @@ def process(DATA_PATH, HOTPOTQA_PATH, suffix='train'):
     with open(os.path.join(DATA_PATH, 'hotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
         pickle.dump(batches, fout)
 
-HOTPOTQA_PATH = '/home/mingding/cognew/hotpot_dev_distractor_v1.json'
-DATA_PATH = './'
-process(DATA_PATH, HOTPOTQA_PATH, 'test')
+HOTPOTQA_PATH_test = '/home/mingding/cognew/hotpot_dev_distractor_v1.json'
+HOTPOTQA_PATH_train = '/home/mingding/cognew/hotpot_train_v1.1.json'
 
+DATA_PATH = './data'
+process(DATA_PATH, HOTPOTQA_PATH_test, 'test')
+process(DATA_PATH, HOTPOTQA_PATH_train, 'train')
 # %%

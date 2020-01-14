@@ -10,7 +10,6 @@ import torchvision.transforms as transforms
 from torch import optim
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
-from torchvision.datasets import MNIST
 
 import pytorch_lightning as pl
 from pytorch_lightning.core.lightning import LightningModule
@@ -20,6 +19,9 @@ from models import Introspector, QAReasoner
 from utils import WarmupLinearLR, QueryDocumentDataset
 from buffer import Buffer
 from training import *
+from cogqa_utils import find_start_end_before_tokenized
+from hotpot_evaluate_utils import eval_func
+import json
 
 class QATask(LightningModule):
     """
@@ -85,34 +87,33 @@ class QATask(LightningModule):
 
         buf = infer_replay(self.key_encoder, self.query_encoder, self.introspector, dbuf, qbuf, device=self.config.device)
         sp = infer_supporting_facts(self.introspector, buf, device=device)
-        ids = infer_QA_reason(self.reasoner, buf, device=device)
+        ids, origins = infer_QA_reason(self.reasoner, buf, device=device)
+        ans = self.tokenizer.convert_tokens_to_string(self.tokenizer.convert_ids_to_tokens(ids))
 
-        # x, y = batch
-        # x = x.view(x.size(0), -1)
-        # y_hat = self.forward(x)
+        for name, value in q_property[0]:
+            if name == '_id':
+                _id = value
+        output = OrderedDict({
+            '_id': _id,
+            'ans': ans,
+            'sp': sp,
+        })
+        
+    def validation_end(self, outputs):
 
-        # loss_val = self.loss(y, y_hat)
-
-        # # acc
-        # labels_hat = torch.argmax(y_hat, dim=1)
-        # val_acc = torch.sum(y == labels_hat).item() / (len(y) * 1.0)
-        # val_acc = torch.tensor(val_acc)
-
-        # if self.on_gpu:
-        #     val_acc = val_acc.cuda(loss_val.device.index)
-
-        # in DP mode (default) make sure if result is scalar, there's another dim in the beginning
-        # if self.trainer.use_dp or self.trainer.use_ddp2:
-        #     loss_val = loss_val.unsqueeze(0)
-        #     val_acc = val_acc.unsqueeze(0)
-
-        # output = OrderedDict({
-        #     'val_loss': loss_val,
-        #     'val_acc': val_acc,
-        # })
-
-        # # can also return just a scalar instead of a dict (return loss_val)
-        # return output
+        sp, ans = {}, {}
+        for data in outputs:
+            sp[data['_id']] = data['sp']
+            ans[data['_id']] = data['ans']
+        with open(self.config.output_path, 'w') as fout:
+            pred = {'answer': ans, 'sp': sp}
+            json.dump(pred, fout)
+        metrics = eval_func(pred, self.config.validation_file)
+        return {'f1': metrics['f1'],
+            'sp_f1': metrics['sp_f1'], 
+            'joint_f1': metrics['joint_f1'],
+            'log': metrics
+        }
 
     # ---------------------
     # TRAINING SETUP
