@@ -9,8 +9,7 @@ class Block:
         self.ids = ids
         self.pos = pos
         self.blk_type = blk_type # 0 sentence A, 1 sentence B
-        for k, v in kwargs:
-            setattr(self, k, v)
+        self.__dict__.update(kwargs)
     def __lt__(self, rhs):
         return self.blk_type < rhs.blk_type or (self.blk_type == rhs.blk_type and self.pos < rhs.pos)
     def __ne__(self, rhs):
@@ -36,8 +35,10 @@ class Buffer:
         if hard:
             for sid, tsen in enumerate(d):
                 psen = properties[sid]
+                if len(tsen) == 0:
+                    print(d)
                 num = updiv(len(tsen), BLOCK_SIZE)
-                bsize = updiv(len(num), num)
+                bsize = updiv(len(tsen), num)
                 for i in range(num):
                     st, en = i * bsize, min((i + 1) * bsize, len(tsen))
                     cnt += 1
@@ -71,8 +72,6 @@ class Buffer:
     def __getitem__(self, key):
         return self.blocks[key]
         
-    def clear(self):
-        self.blocks = []
 
     def calc_size(self):
         return sum([len(b) for b in self.blocks])
@@ -111,12 +110,17 @@ class Buffer:
                 t2 += 1
         return ret
     
-    def filtered(self, fltr: 'function blk, index->bool'):
-        ret = Buffer()
+    def filtered(self, fltr: 'function blk, index->bool', need_residue=False):
+        ret, ret2 = Buffer()
         for i, blk in enumerate(self.blocks):
             if fltr(blk, i):
                 ret.blocks.append(blk)
-        return ret
+            else:
+                ret2.blocks.append(blk)
+        if need_rest:
+            return ret, ret2
+        else:
+            return ret
             
     def random_sample(self, size):
         assert size <= len(self.blocks)
@@ -125,30 +129,43 @@ class Buffer:
         ret.blocks = [self.blocks[i] for i in index]
         return ret
 
-    def marry(self, dbuf, size, split_by_relevance=True, min_positive_sample=1):
-        if not split_by_relevance:
-            raise NotImplementedError
-        else:
-            pbuf = dbuf.filtered(lambda blk, idx: hasattr(blk, 'relevance'))
-            nbuf = dbuf.filtered(lambda blk, idx: not hasattr(blk, 'relevance'))
-            ret = []
-            for i in range(size):
-                pos_num = random.randint(min_positive_sample, len(pbuf)) # determine the number of positive blks at random
-                tmp_buf = self.random_sample(pos_num)
-                # fill the temporal buffer to the full
-                neg_indices = random.shuffle(range(len(nbuf)))
-                tmp_size = tmp_buf.calc_size()
-                for neg_idx in neg_indices:
-                    if tmp_size + len(nbuf[neg_idx]) > CAPACITY:
-                        break
-                    else:
-                        tmp_size += len(nbuf[neg_idx])
-                        tmp_buf.insert(nbuf[neg_idx])
-                ret.append(tmp_buf)
-            return ret
+    def fill_(self, buf, is_prior=None):
+        indices = random.shuffle(range(len(buf)))
+        # First fill the blks with priority
+        if is_prior is not None:
+            t = 0
+            for i, idx in enumerate(indices):
+                if is_prior(buf[idx]):
+                    indices[t], indices[i] = indices[i], indices[t]
+                    t += 1
+        tmp_size = self.calc_size()
+        for idx in indices:
+            if tmp_size + len(buf[idx]) > CAPACITY:
+                break
+            else:
+                tmp_size += len(buf[idx])
+                self.insert(buf[idx])
+        return self
+
+    def sort_(self):
+        self.blocks.sort()
+        return self
+
+    def marry(self, dbuf, size, min_positive_sample=1):
+
+        pbuf = dbuf.filtered(lambda blk, idx: hasattr(blk, 'relevance'))
+        nbuf = dbuf.filtered(lambda blk, idx: not hasattr(blk, 'relevance'))
+        ret = []
+        for i in range(size):
+            pos_num = random.randint(min_positive_sample, len(pbuf)) # determine the number of positive blks at random
+            tmp_buf = self.merge(pbuf.random_sample(pos_num))
+            # fill the temporal buffer to the full
+            tmp_buf.fill_(nbuf)
+            ret.append(tmp_buf)
+        return ret
 
 
-    def export(self, length=None, out=None, device='cuda'):
+    def export(self, device, length=None, out=None):
         if out is None:
             if length is None:
                 total_length = self.calc_size()
@@ -174,28 +191,28 @@ class Buffer:
             t = w
         return ids, att_masks, type_ids
 
-    def export_as_batch(self, length=BLOCK_SIZE):
-        buf = self.export(length)
+    def export_as_batch(self, device, length=BLOCK_SIZE):
+        buf = self.export(length, device)
         return buf.view(3, -1, length)
 
-    def export_relevance(self, length=None, out=None):
+    def export_relevance(self, device, length=None, dtype=torch.long, out=None):
         if out is None:
             total_length = self.calc_size() if length is None else length * len(self.blocks)
-            relevance = torch.zeros(total_length, dtype=torch.long)
+            relevance = torch.zeros(total_length, dtype=dtype, device=device)
         else:
             relevance = out
         t = 0
         for b in self.blocks:
             w = t + (len(b) if length is None else length)
             if hasattr(b, 'relevance'):
-                relevance[t: w] = b.relevance
+                relevance[t: w] = 1
             t = w
         return relevance
 
-    def export_start_end(self, length=None, out=None)
+    def export_start_end(self, device, length=None, out=None):
         if out is None:
             total_length = self.calc_size() if length is None else length * len(self.blocks)
-            start, end = torch.zeros(2, total_length, dtype=torch.long)
+            start, end = torch.zeros(2, total_length, dtype=torch.long, device=device)
         else:
             start, end = out
         t = 0

@@ -23,7 +23,7 @@ from cogqa_utils import find_start_end_before_tokenized
 from hotpot_evaluate_utils import eval_func
 import json
 
-class QATask(LightningModule):
+class HotpotQATask(LightningModule):
     """
     Sample model to show how to define a template
     """
@@ -34,22 +34,19 @@ class QATask(LightningModule):
         :param hparams:
         """
         # init superclass
-        super(QATask, self).__init__()
+        super(HotpotQATask, self).__init__()
         self.config = config
-
-        self.batch_size = config.batch_size
-        self.step_size = config.step_size
 
         # if you specify an example input, the summary will show input/output for each layer
         # self.example_input_array = torch.rand(5, 28 * 28)
 
         # build model
         # TODO key input with Query
-        self.tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
-        self.key_encoder = AutoModel.from_pretrained(config.key_encoder_name)
-        self.query_encoder = AutoModel.from_pretrained(config.query_encoder_name)
-        self.introspector = Introspector.from_pretrained(config.introspector_name)
-        self.reasoner = QAReasoner.from_pretrained(config.reasoner_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+        self.key_encoder = AutoModel.from_pretrained(config.model_name)
+        self.query_encoder = AutoModel.from_pretrained(config.model_name)
+        self.introspector = Introspector.from_pretrained(config.model_name)
+        self.reasoner = QAReasoner.from_pretrained(config.model_name)
 
     # ---------------------
     # TRAINING
@@ -105,10 +102,10 @@ class QATask(LightningModule):
         for data in outputs:
             sp[data['_id']] = data['sp']
             ans[data['_id']] = data['ans']
-        with open(self.config.output_path, 'w') as fout:
+        with open(os.path.join(self.config.output_path, 'pred.json'), 'w') as fout:
             pred = {'answer': ans, 'sp': sp}
             json.dump(pred, fout)
-        metrics = eval_func(pred, self.config.validation_file)
+        metrics = eval_func(pred, os.path.join(self.config.data_path, 'hotpot_dev_distractor_v1.json'))
         return {'f1': metrics['f1'],
             'sp_f1': metrics['sp_f1'], 
             'joint_f1': metrics['joint_f1'],
@@ -129,20 +126,19 @@ class QATask(LightningModule):
                     self.introspector.parameters(),
                     self.reasoner.parameters()
                 ]:
-            optimizer = optim.Adam(params, lr=self.hparams.learning_rate)
+            optimizer = optim.AdamW(params, lr=self.config.lr, weight_decay=self.config.weight_decay)
             scheduler = WarmupLinearLR(optimizer, self.step_size)
             optimizers.append(optimizer)
             schedulers.append(scheduler)
         return optimizers, schedulers
 
-    def __dataloader(self, source):
+    def __dataloader(self, source, batch_size):
         # init data generators
         dataset = QueryDocumentDataset(source)
         # when using multi-node (ddp) we need to add the  datasampler
         train_sampler = None
-        batch_size = self.batch_size
 
-        if self.use_ddp:
+        if isinstance(self.config.gpus, list) and len(self.config.gpus) > 1 or self.config.gpus > 1:
             train_sampler = DistributedSampler(dataset)
 
         should_shuffle = train_sampler is None
@@ -159,43 +155,57 @@ class QATask(LightningModule):
     @pl.data_loader
     def train_dataloader(self):
         logging.info('training data loader called')
-        return self.__dataloader(source=self.config.train_source)
+        file_name = os.path.join(self.config.data_path, 'hotpotqa_train_{}.pkl'.format(self.config.model_name))
+        return self.__dataloader(source=file_name, batch_size=1)
 
     @pl.data_loader
     def val_dataloader(self):
         logging.info('val data loader called')
-        return self.__dataloader(source=self.config.validate_source)
-
-    @pl.data_loader
-    def test_dataloader(self):
-        logging.info('test data loader called')
-        return self.__dataloader(source=self.config.test_source)
+        file_name = os.path.join(self.config.data_path, 'hotpotqa_test_{}.pkl'.format(self.config.model_name))
+        return self.__dataloader(source=self.config.file_name, batch_size=1)
 
     @staticmethod
-    def add_model_specific_args(parent_parser, root_dir):  # pragma: no cover
-        """
-        Parameters you define here will be available to your model through self.hparams
-        :param parent_parser:
-        :param root_dir:
-        :return:
-        """
+    def add_model_specific_args(parent_parser):  # pragma: no cover
         parser = ArgumentParser(parents=[parent_parser])
 
-        # param overwrites
-        # parser.set_defaults(gradient_clip_val=5.0)
+        # # param overwrites
+        # # parser.set_defaults(gradient_clip_val=5.0)
 
-        # network params
-        parser.add_argument('--in_features', default=28 * 28, type=int)
-        parser.add_argument('--out_features', default=10, type=int)
-        # use 500 for CPU, 50000 for GPU to see speed difference
-        parser.add_argument('--hidden_dim', default=50000, type=int)
-        parser.add_argument('--drop_prob', default=0.2, type=float)
-        parser.add_argument('--learning_rate', default=0.001, type=float)
+        # # network params
+        # parser.add_argument('--in_features', default=28 * 28, type=int)
+        # parser.add_argument('--out_features', default=10, type=int)
+        # # use 500 for CPU, 50000 for GPU to see speed difference
+        # parser.add_argument('--hidden_dim', default=50000, type=int)
+        # parser.add_argument('--drop_prob', default=0.2, type=float)
+        # parser.add_argument('--lr', default=0.001, type=float)
 
-        # data
-        parser.add_argument('--data_root', default=os.path.join(root_dir, 'mnist'), type=str)
+        # # data
+        # parser.add_argument('--data_root', default=os.path.join(root_dir, 'mnist'), type=str)
 
-        # training params (opt)
-        parser.add_argument('--optimizer_name', default='adam', type=str)
-        parser.add_argument('--batch_size', default=64, type=int)
+        # # training params (opt)
+        # parser.add_argument('--optimizer_name', default='adam', type=str)
+        # parser.add_argument('--batch_size', default=64, type=int)
         return parser
+    
+if __name__ == "__main__":
+    parser = ArgumentParser()
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=1, help='apply accumulated gradients, to replace batch_size')
+    parser.add_argument('--lr', type=float, default=1e-4, help='learning rate')
+    parser.add_argument('--weight_decay', type=float, default=1e-3)
+    parser.add_argument('--model_name', type=str, default='roberta-base')
+    parser.add_argument('--gpus', type=int, nargs='+', required=True)
+    parser.add_argument('--marriage_batch_size', type=int, default=16, help='the batch size of noisy samples')
+    parser.add_argument('--output_path', type=str, default='./output')
+    parser.add_argument('--data_path', type=str, default='./data')
+    parser.add_argument('--epoch', type=int, default=1)
+
+    parser = HotpotQATask.add_model_specific_args(parser)
+    config = parser.parse_args()
+
+    task = HotpotQATask()
+
+    trainer = Trainer(max_epochs=config.epoch, gpus=config.gpus, distributed_backend='ddp')      
+    trainer.fit(model)
+    # view tensorboard logs 
+    logging.info(f'View tensorboard logs by running\ntensorboard --logdir {os.getcwd()}')
+    logging.info('and going to http://localhost:6006 on your browser')

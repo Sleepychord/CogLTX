@@ -9,7 +9,8 @@ from itertools import chain
 import os
 import pickle
 import logging
-# %%
+from buffer import Buffer
+
 def process(DATA_PATH, HOTPOTQA_PATH, suffix='train'):
     with open(HOTPOTQA_PATH, 'r') as fin:
         dataset = json.load(fin)
@@ -32,6 +33,8 @@ def process(DATA_PATH, HOTPOTQA_PATH, suffix='train'):
             for entity, sentences in data['context']:
                 bgn_idx = len(d)
                 for sen_idx, sen in enumerate(sentences):
+                    if len(sen) == 0: 
+                        continue
                     d.append(tokenizer.tokenize(sen))
                     properties.append([])
                     if suffix == 'test':
@@ -50,7 +53,10 @@ def process(DATA_PATH, HOTPOTQA_PATH, suffix='train'):
             logging.error((data['_id'], e))
         else:
             if flag_ans or suffix == 'test':
-                batches.append((q, q_property, d, properties))
+                # batches.append((q, q_property, d, properties))
+                qbuf = Buffer.split_document_into_blocks(q, tokenizer, properties=q_property)
+                dbuf = Buffer.split_document_into_blocks(d, tokenizer, properties=properties)
+                batches.append((qbuf, dbuf))
             else: 
                 logging.warning((data['_id'], data['question']))
 

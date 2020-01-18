@@ -1,58 +1,7 @@
-import torch
-import torch.nn.functional as F
-from utils import CAPACITY
 
-import random
 
-def train_encoders(qenc, kenc, pnbuf, qbuf, device, temp=1.):
-    # enc is from {id,att_mask,type_id} to {_dump, (hidden_size) tensor}
 
-    # Key block encodings
-    pbuf = pnbuf.filtered(lambda blk, idx: hasattr(blk, 'relevance'))
-    psize, nsize = len(pbuf), len(pnbuf) - len(pbuf)
-    kids, katt_masks, ktype_ids = pnbuf.export_as_batch() # each (key_batch_size, block_size)
-    keys = F.normalize(kenc(kids, katt_masks, ktype_ids)[1], dim=1) # keys (key_batch_size, hidden_size)
-    labels = torch.zeros(len(pnbuf), device=device)
-    labels[:psize] = 1.
 
-    # Query encodings
-    qbuf = qbuf.merge(pbuf)
-    qids, qatt_masks, qtype_ids = qbuf.export(device=device) # (capacity)
-    qids = qids.view(1, -1).expand(psize, -1)
-    qatt_masks = torch.zeros(psize, len(qatt_masks), device=device)
-    for i, t in enumerate(qbuf.block_ends()): 
-        qatt_masks[i, :t] = 1
-    qtype_ids = qtype_ids.view(1, -1).expand(psize, -1)
-    queries = F.normalize(qenc(qids, qatt_masks, qtype_ids)[1], dim=1) # queries (query_batch_size, hidden_size)
-
-    # TODO hybrid bank
-
-    # retrieval loss
-    products = queries.matmul(keys.transpose(0, 1)) # (query_batch_size, key_batch_size)
-    loss = -torch.sum(labels * F.log_softmax(products / temp, dim=1)) / psize
-    return loss 
-
-def train_introspector(introspector, bufs, device):
-    # introspector is from {ids,att_masks,type_ids} to {(seq_len, 1) 0/1 tensor}
-
-    max_len = max([buf.calc_size() for buf in bufs])
-    inputs = torch.zeros(4, len(bufs), max_len, dtype=torch.long, device=device)
-    for i, buf in enumerate(bufs):
-        buf.export(out=(inputs[0, i], inputs[1, i], inputs[2, i]))
-        buf.export_relevance(out=inputs[3, i])
-    loss = introspector(*inputs)[0].mean()
-    return loss
-
-def train_QA_reasoner(reasoner, bufs, device):
-    # reasoner is from {ids,att_masks,type_ids} to {(seq_len, 2) tensor}
-
-    max_len = max([buf.calc_size() for buf in bufs])
-    inputs = torch.zeros(5, len(bufs), max_len, dtype=torch.long, device=device)
-    for i, buf in enumerate(bufs):
-        buf.export(out=(inputs[0, i], inputs[1, i], inputs[2, i]))
-        buf.export_start_end(out=(inputs[3, i], inputs[4, i]))
-    loss = reasoner(*inputs)[0].mean()
-    return loss
 
 def infer_QA_reason(reasoner, buf, device, top_k=3):
     inputs = torch.zeros(3, 1, buf.calc_size(), dtype=torch.long, device=device)
