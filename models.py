@@ -59,27 +59,47 @@ class Introspector(BertPreTrainedModel):
 
 
 
+class Reasoner(object): # Interface
+    def export_labels(self, bufs, device):
+        raise NotImplementedError
+        # return (labels: consistent with forward, crucials: list of list of blks)
+    def forward(self, ids, attn_masks, type_ids, labels, *args, **kwargs):
+        raise NotImplementedError
+        # return (loss, ) if labels is not None else ...
 
-class QAReasoner(BertPreTrainedModel):
+class QAReasoner(Reasoner, BertPreTrainedModel):
     config_class = RobertaConfig
     pretrained_model_archive_map = ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
     base_model_prefix = "roberta"
 
     def __init__(self, config):
-        super(ReasonerQA, self).__init__(config)
+        super(QAReasoner, self).__init__(config)
 
         self.roberta = RobertaModel(config)
         self.qa_outputs = nn.Linear(config.hidden_size, 2)
 
         self.init_weights()
 
+    def export_labels(self, bufs, device):
+        max_len = max([buf.calc_size() for buf in bufs])
+        start, end = torch.zeros(2, len(bufs), max_len, dtype=torch.long, device=device)
+        for i, buf in enumerate(bufs):
+            t = 0
+            for b in buf.blocks:
+                w = t + len(b)
+                if hasattr(b, 'start'):
+                    start[i, t + b.start[0]] = b.start[1]
+                if hasattr(b, 'end'):
+                    end[i, t + b.end[0]] = b.end[1]
+                t = w
+        return start, end
+
     def forward(
         self,
         input_ids,
         attention_mask=None,
         token_type_ids=None,
-        start_positions=None,
-        end_positions=None,
+        labels=None,
         position_ids=None,
         head_mask=None,
     ):
@@ -100,7 +120,8 @@ class QAReasoner(BertPreTrainedModel):
         end_logits = end_logits.squeeze(-1)
 
         outputs = (start_logits, end_logits,) + outputs[2:]
-        if start_positions is not None and end_positions is not None:
+        if labels is not None:
+            start_positions, end_positions = labels
             # If we are on multi-GPU, split add a dimension
             if len(start_positions.size()) > 1:
                 start_positions = start_positions.squeeze(-1)

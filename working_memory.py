@@ -29,11 +29,11 @@ class WorkingMemory(pl.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             [
-                {'params': self.query_encoder.parameters()},
-                {'params': self.key_encoder.parameters(), 'lr': self.config.lr2, 'weight_decay': self.config.weight_decay2}
+                {'params': self.introspector.parameters()},
+                {'params': self.reasoner.parameters(), 'lr': self.config.lr4, 'weight_decay': self.config.weight_decay4}
             ],
-            lr=self.config.lr1,
-            weight_decay=self.config.weight_decay1
+            lr=self.config.lr3,
+            weight_decay=self.config.weight_decay3
             )
         scheduler = WarmupLinearLR(optimizer, self.config.step_size)
 
@@ -62,45 +62,64 @@ class WorkingMemory(pl.LightningModule):
             sampler=train_sampler,
             num_workers=0
         )
-        logging.info('train_dataset reloaded.')
+        logging.info('train_dataset reloaded in Working Memory.')
         return loader
+    
+    def _intervention(self, bufs, labels, crucials, loss_reasoner):
+        loss_reasoner = loss_reasoner.detach()
+        with torch.no_grad():
+            max_bs = self.config.max_reason_num_per_gpu * 2
+            max_blk_num = max([len(buf) for buf in bufs])
+            for i in range(len(bufs)):
+                ids, attn_masks, type_ids = bufs[i].export(device=self.device)
+                bs = len(bufs[i]) - len(crucial_blks[i])
+                # Make inputs by expand with different attention masks
+                ids = ids.view(1, -1).expand(bs, -1)
+                type_ids = type_ids.view(1, -1).expand(bs, -1)
+                attn_masks = attn_masks.view(1, -1).repeat(bs, 1)
+                label = labels[i].view(1, -1).expand(bs, -1)
+                blk_start, t = 0, 0
+                for blk in bufs[i]:
+                    blk_end = blk_start + len(blk)
+                    if blk not in crucials[i]:
+                        attn_masks[t, blk_start: blk_end].zero_()
+                        t += 1
+                    blk_start = blk_end
+                assert t == bs
+                # if bs > max_bs, we cannot feed the inputs directly.
+                losses = []
+                for j in range(bs - 1) // max_bs + 1): 
+                    l, r = max_bs * i, min(bs, max_bs * (i + 1))
+                    losses.append(self.reasoner(ids[l:r], attn_masks[l:r], type_ids[l:r], labels=label[l:r])[0])
+                losses_delta = torch.cat(losses, dim=0) - loss_reasoner[i]
+                # Label relevance
+                t = 0
+                for blk in bufs[i]:
+                    if blk in crucials[i]:
+                        blk.relevance = 1
+                    else:
+                        if losses_delta[t] >= self.config.relevance_threshold: # TODO topk
+                            blk.relevance = 1
+                        else:
+                            if hasattr(blk, 'relevance'):
+                                del blk.relevance
+                        t += 1
 
     def training_step(self, bufs, batch_idx):
         # Make inputs for reasoner
-        inputs = torch.zeros(4, len(bufs), CAPACITY, dtype=torch.long, device=self.device, requires_grad=self.config.latent)
+        inputs = torch.zeros(4, len(bufs), CAPACITY, dtype=torch.long, device=self.device)
         for i, buf in enumerate(bufs):
             buf.export(out=(inputs[0, i], inputs[1, i], inputs[2, i]))
-        labels = reasoner.export_labels(bufs, device) # TODO A
-
-        tensorboard_logs = {'loss': loss, 'denominator_loss': denominator_loss, 'numerator_loss': numerator_loss}
+        # Extract the labels for reasoner, e.g. start and end position for QA reasoner
+        labels, crucials = reasoner.export_labels(bufs, device) # TODO A
+        loss_reasoner = reasoner(*inputs[:3], labels=labels)[0].mean()
+        # Label the relevance by the current reasoner
+        if self.config.latent:
+            self._intervention(bufs, labels, crucials, loss_reasoner)
+        # Train the introspector after labeling
+        for i, buf in enumerate(bufs):
+            buf.export_relevance(out=inputs[3, i])
+        loss_introspector = self.introspector(*inputs[:3], labels=inputs[3])
+        loss = loss_introspector + loss_reasoner
+        tensorboard_logs = {'loss': loss, 'loss_introspector': loss_introspector, 'loss_reasoner': loss_reasoner}
         return {'loss': loss, 'log': tensorboard_logs}
-
-    def backward(self, use_amp, loss, optimizer):
-        
-        if use_amp:
-            with amp.scale_loss(loss, optimizer) as scaled_loss:
-                scaled_loss.backward()
-        else:
-            loss.backward()
-
-def train_introspector(introspector, bufs, device):
-    # introspector is from {ids,att_masks,type_ids} to {(seq_len, 1) 0/1 tensor}
-
-    max_len = max([buf.calc_size() for buf in bufs])
-    inputs = torch.zeros(4, len(bufs), max_len, dtype=torch.long, device=device)
-    for i, buf in enumerate(bufs):
-        buf.export(out=(inputs[0, i], inputs[1, i], inputs[2, i]))
-        buf.export_relevance(out=inputs[3, i])
-    loss = introspector(*inputs)[0].mean()
-    return loss
-
-def train_QA_reasoner(reasoner, bufs, device):
-    # reasoner is from {ids,att_masks,type_ids} to {(seq_len, 2) tensor}
-
-    max_len = max([buf.calc_size() for buf in bufs])
-    inputs = torch.zeros(5, len(bufs), max_len, dtype=torch.long, device=device)
-    for i, buf in enumerate(bufs):
-        buf.export(out=(inputs[0, i], inputs[1, i], inputs[2, i]))
-        buf.export_start_end(out=(inputs[3, i], inputs[4, i]))
-    loss = reasoner(*inputs)[0].mean()
-    return loss

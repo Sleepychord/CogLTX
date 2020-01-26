@@ -152,9 +152,7 @@ class Buffer:
         return self
 
     def marry(self, dbuf, size, min_positive_sample=1):
-
-        pbuf = dbuf.filtered(lambda blk, idx: hasattr(blk, 'relevance'))
-        nbuf = dbuf.filtered(lambda blk, idx: not hasattr(blk, 'relevance'))
+        pbuf, nbuf = dbuf.filtered(lambda blk, idx: hasattr(blk, 'relevance'), need_residue=True)
         ret = []
         for i in range(size):
             pos_num = random.randint(min_positive_sample, len(pbuf)) # determine the number of positive blks at random
@@ -178,6 +176,7 @@ class Buffer:
             ids, att_masks, type_ids = torch.zeros(3, total_length, dtype=torch.long, device=device)
         else: # must be zeros and big enough
             ids, att_masks, type_ids = out
+            att_masks.zero_()
         t = 0
         for b in self.blocks:
             if length is None:
@@ -209,21 +208,6 @@ class Buffer:
             t = w
         return relevance
 
-    def export_start_end(self, device, length=None, out=None):
-        if out is None:
-            total_length = self.calc_size() if length is None else length * len(self.blocks)
-            start, end = torch.zeros(2, total_length, dtype=torch.long, device=device)
-        else:
-            start, end = out
-        t = 0
-        for b in self.blocks:
-            w = t + (len(b) if length is None else length)
-            if hasattr(b, 'start'):
-                start[t + b.start[0]] = b.start[1]
-            if hasattr(b, 'end'):
-                end[t + b.end[0]] = b.end[1]
-            t = w
-        return start, end
 
 if __name__ == "__main__":
     tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
