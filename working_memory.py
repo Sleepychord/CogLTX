@@ -22,9 +22,23 @@ class WorkingMemory(pl.LightningModule):
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
         self.introspector = Introspector.from_pretrained(config.model_name)
         self.reasoner = reasoner
+    
+    def on_save_checkpoint(self, checkpoint): 
+        # to fix the bug of pytorch-lightning 6.0.0, will remove for future versions
+        checkpoint['epoch'] += 1
+        checkpoint['global_step'] += 1
+    def validation_step(self, batch, batch_idx):
+        pass
+    def validation_end(self, outputs):
+        return {'val_loss': -self.current_epoch}
+
 
     def on_epoch_start(self):
         self.device = next(self.introspector.parameters()).device
+        self._file = open(os.path.join(self.config.tmp_dir, 'changes_{}.tmp'.format(self.device)), 'w')
+
+    def on_epoch_end(self):
+        self._file.close()
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
@@ -64,7 +78,17 @@ class WorkingMemory(pl.LightningModule):
         )
         logging.info('train_dataset reloaded in Working Memory.')
         return loader
-    
+
+    def _write_changes(self, blk, key, value):
+        if value is None:
+            if hasattr(blk, key):
+                delattr(blk, key)
+                self._file.write('{} {} {}\n'.format(blk.pos, key, value))
+        else:
+            if not hasattr(blk, key) or getattr(blk, key) != value:
+                setattr(blk, key, value)
+                self._file.write('{} {}\n'.format(blk.pos, key))
+
     def _intervention(self, bufs, labels, crucials, loss_reasoner):
         loss_reasoner = loss_reasoner.detach()
         with torch.no_grad():
@@ -88,7 +112,7 @@ class WorkingMemory(pl.LightningModule):
                 assert t == bs
                 # if bs > max_bs, we cannot feed the inputs directly.
                 losses = []
-                for j in range(bs - 1) // max_bs + 1): 
+                for j in range((bs - 1) // max_bs + 1): 
                     l, r = max_bs * i, min(bs, max_bs * (i + 1))
                     losses.append(self.reasoner(ids[l:r], attn_masks[l:r], type_ids[l:r], labels=label[l:r])[0])
                 losses_delta = torch.cat(losses, dim=0) - loss_reasoner[i]
@@ -96,13 +120,12 @@ class WorkingMemory(pl.LightningModule):
                 t = 0
                 for blk in bufs[i]:
                     if blk in crucials[i]:
-                        blk.relevance = 1
+                        self._write_changes(blk, 'relevance', 1)
                     else:
                         if losses_delta[t] >= self.config.relevance_threshold: # TODO topk
-                            blk.relevance = 1
+                            self._write_changes(blk, 'relevance', 1)
                         else:
-                            if hasattr(blk, 'relevance'):
-                                del blk.relevance
+                            self._write_changes(blk, 'relevance', None)
                         t += 1
 
     def training_step(self, bufs, batch_idx):
@@ -119,7 +142,16 @@ class WorkingMemory(pl.LightningModule):
         # Train the introspector after labeling
         for i, buf in enumerate(bufs):
             buf.export_relevance(out=inputs[3, i])
-        loss_introspector = self.introspector(*inputs[:3], labels=inputs[3])
+        loss_introspector = self.introspector(*inputs[:3], labels=inputs[3]) if self.config.introspect else 0
         loss = loss_introspector + loss_reasoner
         tensorboard_logs = {'loss': loss, 'loss_introspector': loss_introspector, 'loss_reasoner': loss_reasoner}
         return {'loss': loss, 'log': tensorboard_logs}
+
+    @staticmethod
+    def add_specific_args(parser):
+        parser.add_argument('--lr3', type=float, default=1e-4, help='learning rate of introspector')
+        parser.add_argument('--weight_decay3', type=float, default=0, help='weight decay of introspector')
+        parser.add_argument('--lr4', type=float, default=1e-4, help='learning rate of reasoner')
+        parser.add_argument('--weight_decay4', type=float, default=0, help='weight decay of reasoner')
+        parser.add_argument('--max_reason_num_per_gpu', type=int, default=4, help='gradient batch_size')
+

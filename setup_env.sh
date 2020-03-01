@@ -10,12 +10,11 @@ bash ./Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda
 export PATH="$HOME/miniconda/bin:$PATH"
 echo 'export PATH="$HOME/miniconda/bin:$PATH"' >> ~/.bashrc
 echo "Finished installing Miniconda"
-
-conda -y create -n memory python=3.7
+conda -y create -n flyback python=3.7
 conda init bash
 
 # reopen
 
-source activate memory
+source activate flyback
 pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 pip install numpy torch torchvision transformers pytorch-lightning gpustats

@@ -72,6 +72,10 @@ class Buffer:
     def __getitem__(self, key):
         return self.blocks[key]
         
+    def clone(self):
+        ret = Buffer()
+        ret.blocks = self.blocks.copy()
+        return ret
 
     def calc_size(self):
         return sum([len(b) for b in self.blocks])
@@ -151,17 +155,8 @@ class Buffer:
         self.blocks.sort()
         return self
 
-    def marry(self, dbuf, size, min_positive_sample=1):
-        pbuf, nbuf = dbuf.filtered(lambda blk, idx: hasattr(blk, 'relevance'), need_residue=True)
-        ret = []
-        for i in range(size):
-            pos_num = random.randint(min_positive_sample, len(pbuf)) # determine the number of positive blks at random
-            tmp_buf = self.merge(pbuf.random_sample(pos_num))
-            # fill the temporal buffer to the full
-            tmp_buf.fill_(nbuf)
-            ret.append(tmp_buf)
-        return ret
-
+    def marry(self, buf, size):
+        return [self.clone().fill_(buf) for i in range(size)]
 
     def export(self, device, length=None, out=None):
         if out is None:

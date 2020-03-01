@@ -1,6 +1,5 @@
 import torch
 import torch.nn.functional as F
-from utils import DEFAULT_MODEL
 from transformers import BertPreTrainedModel, RobertaConfig, RobertaModel, ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
 
 class Introspector(BertPreTrainedModel):
@@ -12,7 +11,7 @@ class Introspector(BertPreTrainedModel):
     def __init__(self, config):
         super(Introspector, self).__init__(config)
         self.roberta = RobertaModel(config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.dropout = nn.Dropout(0.1)
         self.classifier = nn.Linear(config.hidden_size, 1)
 
         self.init_weights()

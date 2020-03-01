@@ -14,6 +14,8 @@ from transformers import AutoTokenizer, AutoModel
 from optimization import WarmupLinearLR, mocofy
 from memory_bank import MemoryBank
 from memreplay import mem_replay
+from utils import CAPACITY, BLOCK_SIZE
+from buffer import Buffer, Block
 
 class Retriever(pl.LightningModule):
 
@@ -25,9 +27,21 @@ class Retriever(pl.LightningModule):
         self.query_encoder = AutoModel.from_pretrained(config.model_name)
         self.hidden_size = self.query_encoder.hidden_size
 
+    def on_save_checkpoint(self, checkpoint): 
+        # to fix the bug of pytorch-lightning 6.0.0, will remove for future versions
+        checkpoint['epoch'] += 1
+        checkpoint['global_step'] += 1
+    def validation_step(self, batch, batch_idx):
+        pass
+    def validation_end(self, outputs):
+        return {'val_loss': -self.current_epoch}
+
+
     def on_epoch_start(self):
         self.device = next(self.key_encoder.parameters()).device
         self.memory_bank = MemoryBank(self.config.memory_size, self.hidden_size, device=self.device)
+        self._file = open(os.path.join(self.config.tmp_dir, 'buffers_{}.tmp'.format(self.device)), 'w')
+        self.step_size = len(self.train_dataset) * self.config.num_epoch
 
     # def configure_optimizers(self):
     #     optimizer = torch.optim.AdamW(self.query_encoder.parameters(),
@@ -44,12 +58,11 @@ class Retriever(pl.LightningModule):
             [
                 {'params': self.query_encoder.parameters()},
                 {'params': self.key_encoder.parameters(), 'lr': self.config.lr2, 'weight_decay': self.config.weight_decay2}
-            ]
+            ],
             lr=self.config.lr1,
             weight_decay=self.config.weight_decay1
             )
         scheduler = WarmupLinearLR(optimizer, self.config.step_size)
-
         return [optimizer], [scheduler]
 
     def set_dataset(self, dataset, mode='train'):
@@ -64,10 +77,7 @@ class Retriever(pl.LightningModule):
 
     @pl.data_loader
     def train_dataloader(self):
-        # when using multi-node (ddp) we need to add the  datasampler
-        train_sampler = None
-        if isinstance(self.config.gpus, list) and len(self.config.gpus) > 1 or self.config.gpus > 1:
-            train_sampler = DistributedSampler(self.train_dataset)
+        train_sampler = DistributedSampler(self.train_dataset)
         should_shuffle = train_sampler is None
         loader = DataLoader(
             dataset=self.train_dataset,
@@ -79,31 +89,40 @@ class Retriever(pl.LightningModule):
         logging.info('train_dataset reloaded in Retriever.')
         return loader
 
-    @pl.data_loader
-    def test_dataloader(self):
-        # when using multi-node (ddp) we need to add the  datasampler
-        test_sampler = None
-        if isinstance(self.config.gpus, list) and len(self.config.gpus) > 1 or self.config.gpus > 1:
-            test_sampler = DistributedSampler(self.test_dataset)
-        should_shuffle = test_sampler is None
-        loader = DataLoader(
-            dataset=self.test_dataset,
-            batch_size=batch_size,
-            shuffle=should_shuffle,
-            sampler=test_sampler,
-            num_workers=0
-        )
-        logging.info('test_dataset reloaded in Retriever.')
-        return loader
-
     def _add_contrastive_samples(self, buf):
         with torch.no_grad():
             max_bs = self.config.max_key_num_per_gpu * 2
             a, b, c = buf.export_as_batch(device=self.device)
+            poses = torch.tensor([blk.pos for blk in buf], dtype=torch.long, device=self.device)
             for i in range((len(batch) - 1) // max_bs + 1):
                 l, r = max_bs * i, min(len(batch), max_bs * (i + 1))
-                addr = self.memory_bank.get_addr(r - l)
-                addr[:] = F.normalize(self.key_encoder(a[l:r], b[l:r], c[l:r])[1], dim=1)
+                data_addr, pos_addr = self.memory_bank.get_addr(r - l)
+                data_addr[:] = F.normalize(self.key_encoder(a[l:r], b[l:r], c[l:r])[1], dim=1)
+                pos_addr[:] = poses[l:r]
+
+    def _write_buffers(self, bufs):
+        for buf in bufs:
+            for blk in buf:
+                self._file.write(f'{blk.pos} ')
+            self.write('\n')
+    def _construct_buffer_for_reasoning(self, base_buf, nbuf, bank_products, k=10):
+        # base_buf = qbuf.clone().fill_(pbuf)
+        if base_buf.calc_size() > CAPACITY - BLOCK_SIZE: # Full
+            self._write_buffers([base_buf])
+            return
+        if self.config.easy_size > 0:
+            bufs = base_buf.marry(nbuf, self.config.easy_size)
+            self._write_buffers(bufs)
+        if self.config.hard_size > 0:
+            indices = bank_products.topk(k)[-1]
+            # Only saved positions in the memory bank, construct temporal blocks
+            tmp_nbuf = Buffer()
+            scapegoat = torch.zeros(BLOCK_SIZE + 1, dtype=torch.long)
+            for pos in self.memory_bank.pos[indices]:
+                tmp_nbuf.insert(Block(scapegoat, scapegoat, pos))
+            bufs = base_buf.marry(tmp_nbuf, self.config.hard_size)
+            self._write_buffers(bufs)
+
 
     def training_step(self, batch, batch_idx):
         assert len(batch) == 1
@@ -146,24 +165,26 @@ class Retriever(pl.LightningModule):
         loss_denominator = torch.log(grad_products.exp().sum(dim=1) + torch.exp().sum(dim=1)).mean()
         loss_numerator = -torch.sum(labels * grad_products.mean(dim=0))
         loss = loss_denominator + loss_numerator
+        # construct reasoning buffer:
+        self._construct_buffer_for_reasoning(qbuf, nbuf, ungrad_products.detach()) # TODO hyperparam topk
         # Push grad_kbuf into the memory bank
-        self.memory_bank.get_addr(len(keys))[:] = keys
+        data_addr, pos_addr = self.memory_bank.get_addr(len(keys))
+        data_addr[:] = keys
+        pos_addr[:] = torch.tensor([blk.pos for blk in grad_kbuf], dtype=torch.long, device=self.device)
+
         tensorboard_logs = {'loss': loss, 'loss_denominator': loss_denominator, 'loss_numerator': loss_numerator}
         return {'loss': loss, 'log': tensorboard_logs}
+    
 
-
-    def test_step(self, batch, batch_idx):
-        assert len(batch) == 1
-        qbuf, dbuf = batch[0]
-        if not self.config.latent:
-            pass
-        else:
-            device = self.key_encoder.device
-            if not hasattr(self, 'working_memory'):
-                introspector = None
-            elif isinstance(self.working_memory, DistributedDataParallel):
-                introspector = self.working_memory._module_copies[_get_device_index(device)].introspector
-            else:
-                introspector = self.introspector
-            buf = mem_replay(self.key_encoder, self.query_encoder, introspector, dbuf, qbuf, times=self.config.times, device=self.key_encoder.device)
-        return buf
+    @staticmethod
+    def add_specific_args(parser):
+        parser.add_argument('--memory_size', type=int, default=512, help="num blocks in memory bank")
+        parser.add_argument('--lr1', type=float, default=1e-4, help='learning rate of query encoder')
+        parser.add_argument('--weight_decay1', type=float, default=0, help='weight decay of query encoder')
+        parser.add_argument('--lr2', type=float, default=5e-5, help='learning rate of key encoder')
+        parser.add_argument('--weight_decay2', type=float, default=0, help='weight decay of key encoder')
+        parser.add_argument('--max_key_num_per_gpu', type=int, default=4, help='gradient batch_size')
+        parser.add_argument('--max_query_num_per_gpu', type=int, default=4, help='query batch_size')
+        parser.add_argument('--temperature', type=float, default=1., help='temperature in softmax')
+        parser.add_argument('--easy_size', type=int, default=1, help='num easy buffer for reasoning per qd sample')
+        parser.add_argument('--hard_size', type=int, default=1, help='num hard buffer for reasoning per qd sample')

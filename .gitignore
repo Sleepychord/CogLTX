@@ -1,3 +1,7 @@
 data/
 __pycache__/
 *.pkl
+save_dir/
+log_dir/
+tmp_dir/
+unused/

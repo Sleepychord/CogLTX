@@ -2,6 +2,7 @@ import torch
 class MemoryBank():
     def __init__(self, *args, device='cpu'):
         self.data = torch.zeros(*args, device=device)
+        self.pos = torch.zeros(*args, type=torch.long, device=device)
         self.p = 0
     def __len__(self):
         return len(self.data)
@@ -11,4 +12,4 @@ class MemoryBank():
         if self.p + size > self.__len__():
             self.p = 0
         self.p += size
-        return self.data[self.p - size: self.p]
+        return self.data[self.p - size: self.p], self.pos[self.p - size: self.p]

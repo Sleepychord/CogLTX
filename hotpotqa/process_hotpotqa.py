@@ -1,8 +1,6 @@
-# %%
 import re
 import json
 from tqdm import tqdm, trange
-from utils import DEFAULT_MODEL_NAME
 from cogqa_utils import find_start_end_after_tokenized, find_start_end_before_tokenized
 from transformers import AutoModel, AutoTokenizer
 from itertools import chain
@@ -10,8 +8,10 @@ import os
 import pickle
 import logging
 from buffer import Buffer
+from utils import DEFAULT_MODEL_NAME
 
-def process(DATA_PATH, HOTPOTQA_PATH, suffix='train'):
+def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
+    cnt = 0
     with open(HOTPOTQA_PATH, 'r') as fin:
         dataset = json.load(fin)
     tokenizer = AutoTokenizer.from_pretrained(DEFAULT_MODEL_NAME)
@@ -54,8 +54,8 @@ def process(DATA_PATH, HOTPOTQA_PATH, suffix='train'):
         else:
             if flag_ans or suffix == 'test':
                 # batches.append((q, q_property, d, properties))
-                qbuf = Buffer.split_document_into_blocks(q, tokenizer, properties=q_property)
-                dbuf = Buffer.split_document_into_blocks(d, tokenizer, properties=properties)
+                qbuf, cnt = Buffer.split_document_into_blocks(q, tokenizer, properties=q_property, cnt=cnt)
+                dbuf, cnt = Buffer.split_document_into_blocks(d, tokenizer, properties=properties, cnt=cnt)
                 batches.append((qbuf, dbuf))
             else: 
                 logging.warning((data['_id'], data['question']))
@@ -63,10 +63,13 @@ def process(DATA_PATH, HOTPOTQA_PATH, suffix='train'):
     with open(os.path.join(DATA_PATH, 'hotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
         pickle.dump(batches, fout)
 
-HOTPOTQA_PATH_test = '/home/mingding/cognew/hotpot_dev_distractor_v1.json'
-HOTPOTQA_PATH_train = '/home/mingding/cognew/hotpot_train_v1.1.json'
 
-DATA_PATH = './data'
-process(DATA_PATH, HOTPOTQA_PATH_test, 'test')
-process(DATA_PATH, HOTPOTQA_PATH_train, 'train')
-# %%
+if __name__ == "__main__":
+    HOTPOTQA_PATH_test = '/home/mingding/cognew/hotpot_dev_distractor_v1.json'
+    HOTPOTQA_PATH_train = '/home/mingding/cognew/hotpot_train_v1.1.json'
+
+    root_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+    DATA_PATH = os.path.join(root_dir, 'data')
+    os.makedirs(DATA_PATH, exist_ok=True)
+    process(DATA_PATH, HOTPOTQA_PATH_test, DEFAULT_MODEL_NAME, 'test')
+    process(DATA_PATH, HOTPOTQA_PATH_train, DEFAULT_MODEL_NAME, 'train')
