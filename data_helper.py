@@ -2,7 +2,7 @@
 import pickle
 import os
 import re
-
+import logging
 import torch
 from torch.utils.data import Dataset
 
@@ -11,8 +11,9 @@ from buffer import Buffer
 class SimpleListDataset(Dataset):
     def __init__(self, source):
         if isinstance(source, str):
-            with open(source, 'rb') as fout:
-                self.dataset = pickle.load()
+            with open(source, 'rb') as fin:
+                logging.info('Loading dataset...')
+                self.dataset = pickle.load(fin)
         elif isinstance(source, list):
             self.dataset = source
         if not isinstance(self.dataset, list):
@@ -28,7 +29,7 @@ class BlkPosInterface:
         self.d = {}
         self.dataset = dataset
         for bufs in dataset:
-            for buf in dataset:
+            for buf in bufs:
                 for blk in buf:
                     assert blk.pos not in self.d
                     self.d[blk.pos] = blk

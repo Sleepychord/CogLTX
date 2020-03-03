@@ -17,4 +17,5 @@ conda init bash
 
 source activate flyback
 pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-pip install numpy torch torchvision transformers pytorch-lightning gpustats
+pip install numpy torch==1.3.1 torchvision==0.4.2 transformers pytorch-lightning gpustat
+ujson fuzzywuzzy

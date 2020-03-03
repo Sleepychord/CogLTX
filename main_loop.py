@@ -12,13 +12,16 @@ from torch.utils.data.distributed import DistributedSampler
 import pytorch_lightning as pl
 from pytorch_lightning import Trainer
 from transformers import AutoTokenizer, AutoModel
+from pytorch_lightning.logging import TensorBoardLogger
 
 from data_helper import SimpleListDataset, BlkPosInterface, find_lastest_checkpoint
 from retriever import Retriever
 from working_memory import WorkingMemory
 from memreplay import mem_replay
+
         
 def main_loop(config, reasoner):
+    os.makedirs(config.tmp_dir, exist_ok=True)
     retriever = Retriever(config)
     working_memory = WorkingMemory(config, reasoner)
     qd_dataset = SimpleListDataset(config.train_source)
@@ -36,19 +39,19 @@ def main_loop(config, reasoner):
             default_save_path=config.save_dir,
             logger=logger, 
             weights_summary=None,
-            early_stop_callback=False
+            early_stop_callback=False,
+            check_val_every_n_epoch=1,
         )
 
     for epoch in range(config.num_epochs):
-        trainer =_create_new_trainer(epoch + 1, logger_retr)
+        trainer = _create_new_trainer(epoch + 1, logger_retr)
         trainer.fit(retriever)
         buf_dataset = interface.build_buffer_dataset_from_dir(config.tmp_dir)
         working_memory.set_dataset(buf_dataset)
         # Train working_memory
-        trainer =_create_new_trainer(epoch + 1, logger_wkmm)
+        trainer = _create_new_trainer(epoch + 1, logger_wkmm)
         trainer.fit(working_memory)
         interface.apply_changes_from_dir(config.tmp_dir)
-        # TODO real negative
 
 def prediction(config):
     retriever = Retriever.load_from_checkpoint(find_lastest_checkpoint(os.path.join(config.save_dir, 'retriever', f'version_{config.version}')))
@@ -75,6 +78,8 @@ def main_parser(parser=None):
     parser.add_argument("--num_epochs", type=int, default=2, help="num epoch")
     parser.add_argument('--model_name', type=str, default='roberta-base', help='name of pretrained models')
     parser.add_argument('--version', type=int, default=0, help='the version to save or restore')
+    parser.add_argument('--step_size', type=int, default=50000, help='the version to save or restore')
+
 
     parser.add_argument('--latent', action='store_true', help='without relevance labels')
     parser.add_argument('--introspect', action='store_true', help='with introspection')

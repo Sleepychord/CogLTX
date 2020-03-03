@@ -5,10 +5,10 @@ from cogqa_utils import find_start_end_after_tokenized, find_start_end_before_to
 from transformers import AutoModel, AutoTokenizer
 from itertools import chain
 import os
+import sys
 import pickle
 import logging
-from buffer import Buffer
-from utils import DEFAULT_MODEL_NAME
+import pdb
 
 def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
     cnt = 0
@@ -19,23 +19,25 @@ def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
     for data in tqdm(dataset):
         try:
             flag_ans = False
-            question = [tokenizer.cls_token] + tokenizer.tokenize('yes no ' + data['question']) + [tokenizer.sep_token]
+            question = [tokenizer.cls_token] + tokenizer.tokenize('yes no ' + data['question'])
             q, q_property = [question], [[('relevance', 1), ('blk_type', 0)]]
             if suffix != 'test':
                 if data['answer'] in ['yes', 'no']:
                     pos = 1 + (data['answer'] == 'no')
-                    q_property[0].extend([('start', pos), ('end', pos)])
+                    q_property[0].extend([('start', pos, 1), ('end', pos, 1)])
                     flag_ans = True
             else:
                 q_property[0].append(('_id', data['_id']))
 
             d, properties = [], []
             for entity, sentences in data['context']:
+                tokenized_entity = tokenizer.tokenize(entity) + [tokenizer.sep_token]
                 bgn_idx = len(d)
                 for sen_idx, sen in enumerate(sentences):
-                    if len(sen) == 0: 
-                        continue
-                    d.append(tokenizer.tokenize(sen))
+                    tokenized_sen = tokenized_entity + tokenizer.tokenize(sen)
+                    # if len(tokenized_sen) == 0: 
+                    #     continue
+                    d.append(tokenized_sen)
                     properties.append([])
                     if suffix == 'test':
                         properties[-1].append(('origin', (entity, sen_idx)))
@@ -47,7 +49,7 @@ def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
                         ret = find_start_end_after_tokenized(tokenizer, d[bgn_idx + sup_idx], [data['answer']])
                         if ret is not None:
                             start, end = ret[0]
-                            properties[bgn_idx + sup_idx].extend([('start', start), ('end', end)])
+                            properties[bgn_idx + sup_idx].extend([('start', start, 1), ('end', end, 1)])
                             flag_ans = True
         except Exception as e:
             logging.error((data['_id'], e))
@@ -60,8 +62,10 @@ def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
             else: 
                 logging.warning((data['_id'], data['question']))
 
-    with open(os.path.join(DATA_PATH, 'hotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
+    with open(os.path.join(DATA_PATH, '2hotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
         pickle.dump(batches, fout)
+    with open(os.path.join(DATA_PATH, 'toy2hotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
+        pickle.dump(batches[:500], fout)
 
 
 if __name__ == "__main__":
@@ -69,6 +73,9 @@ if __name__ == "__main__":
     HOTPOTQA_PATH_train = '/home/mingding/cognew/hotpot_train_v1.1.json'
 
     root_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+    sys.path.append(root_dir)
+    from buffer import Buffer
+    from utils import DEFAULT_MODEL_NAME
     DATA_PATH = os.path.join(root_dir, 'data')
     os.makedirs(DATA_PATH, exist_ok=True)
     process(DATA_PATH, HOTPOTQA_PATH_test, DEFAULT_MODEL_NAME, 'test')

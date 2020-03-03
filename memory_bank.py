@@ -2,7 +2,7 @@ import torch
 class MemoryBank():
     def __init__(self, *args, device='cpu'):
         self.data = torch.zeros(*args, device=device)
-        self.pos = torch.zeros(*args, type=torch.long, device=device)
+        self.pos = torch.zeros(args[0], dtype=torch.long, device='cpu')
         self.p = 0
     def __len__(self):
         return len(self.data)

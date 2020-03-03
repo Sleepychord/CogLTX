@@ -14,6 +14,8 @@ from transformers import AutoTokenizer, AutoModel
 from optimization import WarmupLinearLR
 from models import Introspector, QAReasoner
 from utils import CAPACITY
+from buffer import buffer_collate
+
 class WorkingMemory(pl.LightningModule):
 
     def __init__(self, config, reasoner):
@@ -31,7 +33,16 @@ class WorkingMemory(pl.LightningModule):
         pass
     def validation_end(self, outputs):
         return {'val_loss': -self.current_epoch}
-
+    @pl.data_loader
+    def val_dataloader(self):
+        return DataLoader(
+            dataset=range(8),
+            sampler=DistributedSampler(range(8)),
+            batch_size=1,
+            num_workers=0
+        )
+    def forward(self, x):
+        pass
 
     def on_epoch_start(self):
         self.device = next(self.introspector.parameters()).device
@@ -65,16 +76,14 @@ class WorkingMemory(pl.LightningModule):
 
     def train_dataloader(self):
         # when using multi-node (ddp) we need to add the  datasampler
-        train_sampler = None
-        if isinstance(self.config.gpus, list) and len(self.config.gpus) > 1 or self.config.gpus > 1:
-            train_sampler = DistributedSampler(self.train_dataset)
-        should_shuffle = train_sampler is None
+        train_sampler = DistributedSampler(self.train_dataset)
         loader = DataLoader(
             dataset=self.train_dataset,
-            batch_size=batch_size,
-            shuffle=should_shuffle,
+            batch_size=self.config.max_reason_num_per_gpu,
+            shuffle=False,
             sampler=train_sampler,
-            num_workers=0
+            num_workers=0,
+            collate_fn=buffer_collate
         )
         logging.info('train_dataset reloaded in Working Memory.')
         return loader
@@ -134,8 +143,8 @@ class WorkingMemory(pl.LightningModule):
         for i, buf in enumerate(bufs):
             buf.export(out=(inputs[0, i], inputs[1, i], inputs[2, i]))
         # Extract the labels for reasoner, e.g. start and end position for QA reasoner
-        labels, crucials = reasoner.export_labels(bufs, device) # TODO A
-        loss_reasoner = reasoner(*inputs[:3], labels=labels)[0].mean()
+        labels, crucials = self.reasoner.export_labels(bufs, self.device) # TODO A
+        loss_reasoner = self.reasoner(*inputs[:3], labels=labels)[0].mean()
         # Label the relevance by the current reasoner
         if self.config.latent:
             self._intervention(bufs, labels, crucials, loss_reasoner)

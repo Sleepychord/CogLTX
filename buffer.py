@@ -4,8 +4,7 @@ from transformers import BertTokenizer
 from utils import CAPACITY, BLOCK_SIZE
 import random
 class Block:
-    def __init__(self, tokens, ids, pos, blk_type=1, **kwargs):
-        self.tokens = tokens
+    def __init__(self, ids, pos, blk_type=1, **kwargs):
         self.ids = ids
         self.pos = pos
         self.blk_type = blk_type # 0 sentence A, 1 sentence B
@@ -35,8 +34,8 @@ class Buffer:
         if hard:
             for sid, tsen in enumerate(d):
                 psen = properties[sid]
-                if len(tsen) == 0:
-                    print(d)
+                # if len(tsen) == 0:
+                #     print(d)
                 num = updiv(len(tsen), BLOCK_SIZE)
                 bsize = updiv(len(tsen), num)
                 for i in range(num):
@@ -48,12 +47,12 @@ class Buffer:
                     for p in psen:
                         if len(p) == 2:
                             tmp_kwargs[p[0]] = p[1]
-                        elif len(p) == 3 and st <= p[1] < en:
-                            tmp_kwargs[p[0]] = (p[1], p[2])
+                        elif len(p) == 3:
+                            if st <= p[1] < en:
+                                tmp_kwargs[p[0]] = (p[1], p[2])
                         else:
                             raise ValueError('Invalid property {}'.format(p))
-                    
-                    ret.insert(Block(tmp, tokenizer.convert_tokens_to_ids(tmp), cnt, **tmp_kwargs))
+                    ret.insert(Block(tokenizer.convert_tokens_to_ids(tmp), cnt, **tmp_kwargs))
         else:
             raise NotImplementedError
         return ret, cnt
@@ -94,8 +93,8 @@ class Buffer:
                     self.blocks.insert(index, b)
                     break
         else:
-            for index in range(len(self.blocks), 0, -1):
-                if index == 0 or b < self.blocks[index - 1]:
+            for index in range(len(self.blocks), -1, -1):
+                if index == 0 or self.blocks[index - 1] < b:
                     self.blocks.insert(index, b)
                     break
 
@@ -115,13 +114,13 @@ class Buffer:
         return ret
     
     def filtered(self, fltr: 'function blk, index->bool', need_residue=False):
-        ret, ret2 = Buffer()
+        ret, ret2 = Buffer(), Buffer()
         for i, blk in enumerate(self.blocks):
             if fltr(blk, i):
                 ret.blocks.append(blk)
             else:
                 ret2.blocks.append(blk)
-        if need_rest:
+        if need_residue:
             return ret, ret2
         else:
             return ret
@@ -134,7 +133,8 @@ class Buffer:
         return ret
 
     def fill_(self, buf, is_prior=None):
-        indices = random.shuffle(range(len(buf)))
+        indices = list(range(len(buf)))
+        random.shuffle(indices)
         # First fill the blks with priority
         if is_prior is not None:
             t = 0
@@ -158,16 +158,14 @@ class Buffer:
     def marry(self, buf, size):
         return [self.clone().fill_(buf) for i in range(size)]
 
-    def export(self, device, length=None, out=None):
+    def export(self, device=None, length=None, out=None):
         if out is None:
             if length is None:
                 total_length = self.calc_size()
+                if total_length > CAPACITY:
+                    raise ValueError('export inputs larger than capacity')
             else:
                 total_length = length * len(self.blocks)
-
-            if total_length > CAPACITY:
-                raise ValueError('export inputs larger than capacity')
-
             ids, att_masks, type_ids = torch.zeros(3, total_length, dtype=torch.long, device=device)
         else: # must be zeros and big enough
             ids, att_masks, type_ids = out
@@ -178,16 +176,17 @@ class Buffer:
                 w = t + len(b)
             else:
                 w = t + length
-            ids[t:w] = b.ids # id
-            if b.blk_type == 1:
-                type_ids[t:w] = 1 # sentence B
+            torch.tensor
+            ids[t:t + len(b)] = torch.tensor(b.ids, dtype=torch.long, device=device) # id
+            # if b.blk_type == 1:
+            #     type_ids[t:w] = 1 # sentence B
             att_masks[t:t + len(b)] = 1 # attention_mask
             t = w
         return ids, att_masks, type_ids
 
-    def export_as_batch(self, device, length=BLOCK_SIZE):
-        buf = self.export(length, device)
-        return buf.view(3, -1, length)
+    def export_as_batch(self, device, length=BLOCK_SIZE+1):
+        ids, att_masks, type_ids = self.export(device, length)
+        return ids.view(-1, length), att_masks.view(-1, length), type_ids.view(-1, length)
 
     def export_relevance(self, device, length=None, dtype=torch.long, out=None):
         if out is None:
@@ -203,6 +202,8 @@ class Buffer:
             t = w
         return relevance
 
+def buffer_collate(batch): # does not collate
+    return batch
 
 if __name__ == "__main__":
     tokenizer = BertTokenizer.from_pretrained('bert-base-cased')

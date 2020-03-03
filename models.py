@@ -11,8 +11,8 @@ class Introspector(BertPreTrainedModel):
     def __init__(self, config):
         super(Introspector, self).__init__(config)
         self.roberta = RobertaModel(config)
-        self.dropout = nn.Dropout(0.1)
-        self.classifier = nn.Linear(config.hidden_size, 1)
+        self.dropout = torch.nn.Dropout(0.1)
+        self.classifier = torch.nn.Linear(config.hidden_size, 1)
 
         self.init_weights()
 
@@ -75,7 +75,7 @@ class QAReasoner(Reasoner, BertPreTrainedModel):
         super(QAReasoner, self).__init__(config)
 
         self.roberta = RobertaModel(config)
-        self.qa_outputs = nn.Linear(config.hidden_size, 2)
+        self.qa_outputs = torch.nn.Linear(config.hidden_size, 2)
 
         self.init_weights()
 
