@@ -4,6 +4,7 @@ import logging
 from argparse import ArgumentParser
 import random
 from tqdm import tqdm
+import pdb
 
 import torch
 import torch.nn.functional as F
@@ -19,11 +20,11 @@ from retriever import Retriever
 from working_memory import WorkingMemory
 from memreplay import mem_replay
 
-        
-def main_loop(config, reasoner):
+
+def main_loop(config):
     os.makedirs(config.tmp_dir, exist_ok=True)
     retriever = Retriever(config)
-    working_memory = WorkingMemory(config, reasoner)
+    working_memory = WorkingMemory(config)
     qd_dataset = SimpleListDataset(config.train_source)
     interface = BlkPosInterface(qd_dataset)
     retriever.set_dataset(qd_dataset)
@@ -54,18 +55,17 @@ def main_loop(config, reasoner):
         interface.apply_changes_from_dir(config.tmp_dir)
 
 def prediction(config):
-    retriever = Retriever.load_from_checkpoint(find_lastest_checkpoint(os.path.join(config.save_dir, 'retriever', f'version_{config.version}')))
-    working_memory = WorkingMemory.load_from_checkpoint(find_lastest_checkpoint(os.path.join(config.save_dir, 'working_memory', f'version_{config.version}')))
-    qd_dataset = SimpleListDataset(config.test_source)
     device = f'cuda:{config.gpus[0]}'
+    retriever = Retriever.load_from_checkpoint(find_lastest_checkpoint(os.path.join(config.save_dir, 'retriever', f'version_{config.version}', 'checkpoints'))).to(device).eval()
+    working_memory = WorkingMemory.load_from_checkpoint(find_lastest_checkpoint(os.path.join(config.save_dir, 'working_memory', f'version_{config.version}', 'checkpoints'))).to(device).eval()
+    qd_dataset = SimpleListDataset(config.test_source)
     with torch.no_grad():
         introspector = working_memory.introspector if config.introspect else None
         for qbuf, dbuf in tqdm(qd_dataset):
             buf, relevance_score = mem_replay(retriever.key_encoder, retriever.query_encoder, introspector, dbuf, qbuf, device=device) # TODO times hyperparam
-            inputs = buf.export()
+            inputs = [t.unsqueeze(0) for t in buf.export(device=device)]
             output = working_memory.reasoner(*inputs)
-            yield qbuf, dbuf, buf, relevance_score, inputs[0], output
-
+            yield qbuf, dbuf, buf, relevance_score, inputs[0][0], output
 
 
 def main_parser(parser=None):

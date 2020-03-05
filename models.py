@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from transformers import BertPreTrainedModel, RobertaConfig, RobertaModel, ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
+from torch.nn import CrossEntropyLoss
 
 class Introspector(BertPreTrainedModel):
 
@@ -43,6 +44,7 @@ class Introspector(BertPreTrainedModel):
 
         outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
         if labels is not None:
+            labels = labels.type_as(logits)
             loss_fct = torch.nn.BCEWithLogitsLoss()
             # Only keep active parts of the loss
             if attention_mask is not None:
@@ -52,7 +54,7 @@ class Introspector(BertPreTrainedModel):
                 loss = loss_fct(active_logits, active_labels)
             else:
                 loss = loss_fct(logits.view(-1), labels.view(-1))
-            outputs = (loss,) + outputs
+            outputs = loss
 
         return outputs  # (loss), scores, (hidden_states), (attentions)
 
@@ -80,18 +82,20 @@ class QAReasoner(Reasoner, BertPreTrainedModel):
         self.init_weights()
 
     def export_labels(self, bufs, device):
-        max_len = max([buf.calc_size() for buf in bufs])
-        start, end = torch.zeros(2, len(bufs), max_len, dtype=torch.long, device=device)
+        labels = torch.zeros(2, len(bufs), dtype=torch.long, device=device)
+        crucials = []
         for i, buf in enumerate(bufs):
-            t = 0
+            t, crucial = 0, []
             for b in buf.blocks:
-                w = t + len(b)
                 if hasattr(b, 'start'):
-                    start[i, t + b.start[0]] = b.start[1]
+                    labels[0, i] = t + b.start[0]
                 if hasattr(b, 'end'):
-                    end[i, t + b.end[0]] = b.end[1]
-                t = w
-        return start, end
+                    labels[1, i] = t + b.end[0]
+                if hasattr(b, 'start') or hasattr(b, 'end'):
+                    crucial.append(b)
+                t += len(b)
+            crucials.append(crucial)
+        return labels, crucials
 
     def forward(
         self,
@@ -111,7 +115,7 @@ class QAReasoner(Reasoner, BertPreTrainedModel):
             head_mask=head_mask,
         )
 
-        sequence_output = outputs[0]
+        sequence_output = outputs[0] # batch_size * max_len * hidden_size
 
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
@@ -135,6 +139,6 @@ class QAReasoner(Reasoner, BertPreTrainedModel):
             start_loss = loss_fct(start_logits, start_positions)
             end_loss = loss_fct(end_logits, end_positions)
             total_loss = (start_loss + end_loss) / 2
-            outputs = (total_loss,) + outputs
+            outputs = total_loss
 
         return outputs  # (loss), start_logits, end_logits, (hidden_states), (attentions)

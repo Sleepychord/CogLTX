@@ -36,7 +36,7 @@ class Buffer:
                 psen = properties[sid]
                 # if len(tsen) == 0:
                 #     print(d)
-                num = updiv(len(tsen), BLOCK_SIZE)
+                num = updiv(len(tsen), BLOCK_SIZE - 1) # cls
                 bsize = updiv(len(tsen), num)
                 for i in range(num):
                     st, en = i * bsize, min((i + 1) * bsize, len(tsen))
@@ -49,7 +49,7 @@ class Buffer:
                             tmp_kwargs[p[0]] = p[1]
                         elif len(p) == 3:
                             if st <= p[1] < en:
-                                tmp_kwargs[p[0]] = (p[1], p[2])
+                                tmp_kwargs[p[0]] = (p[1] - st, p[2])
                         else:
                             raise ValueError('Invalid property {}'.format(p))
                     ret.insert(Block(tokenizer.convert_tokens_to_ids(tmp), cnt, **tmp_kwargs))
@@ -158,10 +158,12 @@ class Buffer:
     def marry(self, buf, size):
         return [self.clone().fill_(buf) for i in range(size)]
 
-    def export(self, device=None, length=None, out=None):
+    def export(self, device=None, length=None, out=None, add_cls=False):
         if out is None:
             if length is None:
                 total_length = self.calc_size()
+                if add_cls:
+                    total_length += len(self.blocks)
                 if total_length > CAPACITY:
                     raise ValueError('export inputs larger than capacity')
             else:
@@ -172,20 +174,18 @@ class Buffer:
             att_masks.zero_()
         t = 0
         for b in self.blocks:
-            if length is None:
-                w = t + len(b)
-            else:
-                w = t + length
-            torch.tensor
+            if add_cls:
+                ids[t], att_masks[t] = 0, 1 # 0 is cls_id
+                t += 1
             ids[t:t + len(b)] = torch.tensor(b.ids, dtype=torch.long, device=device) # id
             # if b.blk_type == 1:
             #     type_ids[t:w] = 1 # sentence B
             att_masks[t:t + len(b)] = 1 # attention_mask
-            t = w
+            t += len(b) if length is None else (length - add_cls)
         return ids, att_masks, type_ids
 
-    def export_as_batch(self, device, length=BLOCK_SIZE+1):
-        ids, att_masks, type_ids = self.export(device, length)
+    def export_as_batch(self, device, length=BLOCK_SIZE+1, add_cls=False):
+        ids, att_masks, type_ids = self.export(device, length, add_cls=add_cls)
         return ids.view(-1, length), att_masks.view(-1, length), type_ids.view(-1, length)
 
     def export_relevance(self, device, length=None, dtype=torch.long, out=None):

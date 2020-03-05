@@ -3,6 +3,10 @@ import json
 import logging
 from argparse import ArgumentParser
 import random
+import sys
+import pdb
+from copy import deepcopy
+
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -17,8 +21,7 @@ from memreplay import mem_replay
 from utils import CAPACITY, BLOCK_SIZE
 from buffer import Buffer, Block, buffer_collate
 
-import sys
-import pdb
+
 
 class ForkedPdb(pdb.Pdb):
     """A Pdb subclass that may be used
@@ -34,10 +37,12 @@ class ForkedPdb(pdb.Pdb):
             sys.stdin = _stdin
 
 class Retriever(pl.LightningModule):
-
     def __init__(self, config):
         super(Retriever, self).__init__()
         self.config = config
+        self.hparams = deepcopy(config)
+        if hasattr(self.hparams, 'gpus'):
+            del self.hparams.gpus
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
         self.key_encoder = AutoModel.from_pretrained(config.model_name)
         self.query_encoder = AutoModel.from_pretrained(config.model_name)
@@ -47,10 +52,10 @@ class Retriever(pl.LightningModule):
         # to fix the bug of pytorch-lightning 6.0.0, will remove for future versions
         checkpoint['epoch'] += 1
         checkpoint['global_step'] += 1
+        print('saved retriever!')
     def validation_step(self, batch, batch_idx):
         pass
     def validation_end(self, outputs):
-        print('validation end')
         return {'val_loss': -self.current_epoch}
     @pl.data_loader
     def val_dataloader(self):
@@ -118,7 +123,7 @@ class Retriever(pl.LightningModule):
     def _add_contrastive_samples(self, buf):
         with torch.no_grad():
             max_bs = self.config.max_key_num_per_gpu * 2
-            a, b, c = buf.export_as_batch(device=self.device)
+            a, b, c = buf.export_as_batch(device=self.device, add_cls=True)
             poses = torch.tensor([blk.pos for blk in buf], dtype=torch.long, device='cpu')
             for i in range((len(buf) - 1) // max_bs + 1):
                 l, r = max_bs * i, min(len(buf), max_bs * (i + 1))
@@ -171,7 +176,7 @@ class Retriever(pl.LightningModule):
         # Tensors about keys:
         labels = grad_kbuf.export_relevance(device=self.device, length=1, dtype=torch.float) # (len(grad_kbuf),)
         labels /= labels.sum()
-        kids, kattn_masks, ktype_ids = grad_kbuf.export_as_batch(device=self.device) # each (len(grad_kbuf), hidden_size)
+        kids, kattn_masks, ktype_ids = grad_kbuf.export_as_batch(device=self.device, add_cls=True) # each (len(grad_kbuf), hidden_size)
         keys = F.normalize(self.key_encoder(kids, kattn_masks, ktype_ids)[1], dim=1)
         
         # Tensors about queries:

@@ -71,7 +71,7 @@ class BlkPosInterface:
         return SimpleListDataset(ret)
 
 def find_lastest_checkpoint(checkpoints_dir):
-    lastest = (-1, filename)
+    lastest = (-1, '')
     for shortname in os.listdir(checkpoints_dir):
         m = re.match(r'_ckpt_epoch_(\d+).+', shortname)
         if m is not None and int(m.group(1)) > lastest[0]:

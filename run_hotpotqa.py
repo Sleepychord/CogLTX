@@ -1,6 +1,10 @@
 from argparse import ArgumentParser
 import os
 import torch
+import pdb
+import json
+
+from transformers import AutoTokenizer
 
 from main_loop import main_loop, prediction, main_parser
 from retriever import Retriever
@@ -9,8 +13,8 @@ from models import QAReasoner
 from hotpotqa.hotpot_evaluate_utils import eval_func
 
 def logits2span(start_logits, end_logits, top_k=3):
-    top_start_logits, top_start_indices = torch.topk(start_logits.squeeze(0), k=top_k)
-    top_end_logits, top_end_indices = torch.topk(end_logits.squeeze(0), k=top_k)
+    top_start_logits, top_start_indices = torch.topk(start_logits.squeeze_(0), k=top_k)
+    top_end_logits, top_end_indices = torch.topk(end_logits.squeeze_(0), k=top_k)
     ret = []
     for start_pos in top_start_indices:
         for end_pos in top_end_indices:
@@ -34,17 +38,19 @@ def extract_supporing_facts(config, buf, score, start, end):
             break
     # best 2 entity sentence
     for idx in score.argsort(descending=True):
-        entity = buf[idx].origin[0]
-        if buf[idx].blk_type > 0 and all([entity != fact[0] for fact in ret]):
-            ret.append(list(buf[i].origin))
-        if len(ret) >= 2:
-            break
+        if buf[idx].blk_type > 0:
+            entity = buf[idx].origin[0]
+            if all([entity != fact[0] for fact in ret]):
+                ret.append(list(buf[idx].origin))
+            if len(ret) >= 2:
+                break
     # auxiliary sp
-    gold_entities = [t[0] for t in ret]
+    gold_entities = [t[0] for t in ret if t[1] != 0]
     for i, blk in enumerate(buf):
-        entity, sen_idx = blk.origin
-        if sen_idx == 0 and entity in gold_entities and score[i] > config.sp_threshold:
-            ret.append([entity, sen_idx])
+        if buf[i].blk_type > 0:
+            entity, sen_idx = blk.origin
+            if sen_idx == 0 and entity in gold_entities and score[i] > config.sp_threshold:
+                ret.append([entity, sen_idx])
     return ret
 
 if __name__ == "__main__":
@@ -58,21 +64,22 @@ if __name__ == "__main__":
     # ---------------------------------------------
     parser = main_parser(parser)
     parser.set_defaults(
-        train_source = os.path.join(root_dir, 'data', 'toy2hotpotqa_train_roberta-base.pkl'),
+        train_source = os.path.join(root_dir, 'data', '2hotpotqa_train_roberta-base.pkl'),
         test_source = os.path.join(root_dir, 'data', '2hotpotqa_test_roberta-base.pkl'),
         introspect = True
     )
     config = parser.parse_args()
+    config.reasoner_cls_name = 'QAReasoner'
     if not config.only_predict: # train
-        reasoner = QAReasoner.from_pretrained(config.model_name)
-        main_loop(config, reasoner)
+        main_loop(config)
 
+    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     sp, ans = {}, {}
     for qbuf, dbuf, buf, relevance_score, ids, output in prediction(config):
         _id = qbuf[0]._id
-        start, end = logits2span(output)
+        start, end = logits2span(*output)
         ans_ids = ids[start: end]
-        ans[_id] = self.tokenizer.convert_tokens_to_string(self.tokenizer.convert_ids_to_tokens(ans_ids))
+        ans[_id] = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(ans_ids)).strip()
         # supporting facts
         sp[_id] = extract_supporing_facts(config, buf, relevance_score, start, end)
     with open(os.path.join(config.tmp_dir, 'pred.json'), 'w') as fout:
