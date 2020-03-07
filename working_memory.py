@@ -52,8 +52,7 @@ class WorkingMemory(pl.LightningModule):
 
     def on_epoch_start(self):
         self.device = next(self.introspector.parameters()).device
-        if config.latent:
-            self._file = open(os.path.join(self.config.tmp_dir, 'changes_{}.tmp'.format(self.device)), 'w')
+        self._file = open(os.path.join(self.config.tmp_dir, 'changes_{}.txt'.format(self.device)), 'w')
 
     def on_epoch_end(self):
         self._file.close()

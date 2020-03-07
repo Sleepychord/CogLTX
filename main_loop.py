@@ -45,7 +45,7 @@ def main_loop(config):
         )
 
     for epoch in range(config.num_epochs):
-        trainer = _create_new_trainer(epoch + 1, logger_retr)
+        trainer = _create_new_trainer(epoch + 3, logger_retr) # TODO fix +2
         trainer.fit(retriever)
         buf_dataset = interface.build_buffer_dataset_from_dir(config.tmp_dir)
         working_memory.set_dataset(buf_dataset)
@@ -78,7 +78,7 @@ def main_parser(parser=None):
     parser.add_argument("--num_epochs", type=int, default=2, help="num epoch")
     parser.add_argument('--model_name', type=str, default='roberta-base', help='name of pretrained models')
     parser.add_argument('--version', type=int, default=0, help='the version to save or restore')
-    parser.add_argument('--step_size', type=int, default=50000, help='the version to save or restore')
+    parser.add_argument('--step_size', type=int, default=20000, help='the version to save or restore')
 
 
     parser.add_argument('--latent', action='store_true', help='without relevance labels')

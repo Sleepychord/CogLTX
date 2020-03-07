@@ -70,8 +70,10 @@ class Retriever(pl.LightningModule):
     def on_epoch_start(self):
         self.device = next(self.key_encoder.parameters()).device
         self.memory_bank = MemoryBank(self.config.memory_size, self.hidden_size, device=self.device)
-        self._file = open(os.path.join(self.config.tmp_dir, 'buffers_{}.tmp'.format(self.device)), 'w')
         self.step_size = len(self.train_dataset) * self.config.num_epochs
+        self._file = open(os.path.join(self.config.tmp_dir, 'buffers_{}.txt'.format(self.device)), 'w')
+    def on_epoch_end(self):
+        self._file.close()
 
     # def configure_optimizers(self):
     #     optimizer = torch.optim.AdamW(self.query_encoder.parameters(),
@@ -128,7 +130,8 @@ class Retriever(pl.LightningModule):
             for i in range((len(buf) - 1) // max_bs + 1):
                 l, r = max_bs * i, min(len(buf), max_bs * (i + 1))
                 data_addr, pos_addr = self.memory_bank.get_addr(r - l)
-                data_addr[:] = F.normalize(self.key_encoder(a[l:r], b[l:r], c[l:r])[1], dim=1)
+                data_addr[:] = F.normalize(self.key_encoder(a[l:r], b[l:r], c[l:r])[0].mean(dim=1), dim=1)
+                # data_addr[:] = self.key_encoder(a[l:r], b[l:r], c[l:r])[1]
                 pos_addr[:] = poses[l:r]
 
     def _write_buffers(self, bufs):
@@ -150,7 +153,8 @@ class Retriever(pl.LightningModule):
             tmp_nbuf = Buffer()
             scapegoat = torch.zeros(BLOCK_SIZE + 1, dtype=torch.long)
             for pos in self.memory_bank.pos[indices]:
-                tmp_nbuf.insert(Block(scapegoat, pos))
+                if pos > 0:
+                    tmp_nbuf.insert(Block(scapegoat, pos))
             bufs = base_buf.marry(tmp_nbuf, self.config.hard_size)
             self._write_buffers(bufs)
 
@@ -177,8 +181,9 @@ class Retriever(pl.LightningModule):
         labels = grad_kbuf.export_relevance(device=self.device, length=1, dtype=torch.float) # (len(grad_kbuf),)
         labels /= labels.sum()
         kids, kattn_masks, ktype_ids = grad_kbuf.export_as_batch(device=self.device, add_cls=True) # each (len(grad_kbuf), hidden_size)
-        keys = F.normalize(self.key_encoder(kids, kattn_masks, ktype_ids)[1], dim=1)
-        
+        keys = F.normalize(self.key_encoder(kids, kattn_masks, ktype_ids)[0].mean(dim=1), dim=1)
+        # keys = self.key_encoder(kids, kattn_masks, ktype_ids)[1]
+
         # Tensors about queries:
         qids, qattn_masks, qtype_ids = qbuf.export(device=self.device) # (capacity)
         ends, query_num = qbuf.block_ends(), len(qbuf)
@@ -191,13 +196,19 @@ class Retriever(pl.LightningModule):
         for i, t in enumerate(ends):
             # TODO check if mask and short seq are equivalent, infer_replay
             qattn_masks[i, :t] = 1
-        queries = F.normalize(self.query_encoder(qids, qattn_masks, qtype_ids)[1], dim=1) # queries (query_num, hidden_size)
+        queries = F.normalize(self.query_encoder(qids, qattn_masks, qtype_ids)[0].mean(dim=1), dim=1) # queries (query_num, hidden_size)
+        # queries = self.query_encoder(qids, qattn_masks, qtype_ids)[1] # queries (query_num, hidden_size)
+
         # Contrastive loss
         grad_products = queries.matmul(keys.t()) / self.config.temperature # (query_num, len(grad_kbuf))
         ungrad_products = queries.matmul(self.memory_bank.data.t()) / self.config.temperature # (query_num, memory_size)
         # Products are in [-1./temp, 1./temp], minus 1./temp if necessary
-        loss_denominator = torch.log(grad_products.exp().sum(dim=1) + ungrad_products.exp().sum(dim=1)).mean()
-        loss_numerator = -torch.sum(labels * grad_products.mean(dim=0))
+        max_value = torch.max(grad_products.max(dim=1)[0], ungrad_products.max(dim=1)[0]).unsqueeze(1).detach()
+        loss_denominator = torch.log((grad_products - max_value).exp().sum(dim=1) + (ungrad_products - max_value).exp().sum(dim=1)).mean()
+        # loss_denominator = torch.log((grad_products - max_value).exp().sum(dim=1)).mean()
+        loss_numerator = -torch.sum(labels * (grad_products - max_value).mean(dim=0))
+        # loss_denominator = torch.log(grad_products.exp().sum(dim=1) + ungrad_products.exp().sum(dim=1)).mean()
+        # loss_numerator = -torch.sum(labels * grad_products.mean(dim=0))
         loss = loss_denominator + loss_numerator
         # construct reasoning buffer:
         self._construct_buffer_for_reasoning(qbuf, nbuf, ungrad_products.detach()) # TODO hyperparam topk
@@ -213,17 +224,17 @@ class Retriever(pl.LightningModule):
         keys, grad_kbuf = self.unpushed_states
         data_addr, pos_addr = self.memory_bank.get_addr(len(keys))
         data_addr[:] = keys
-        pos_addr[:] = torch.tensor([blk.pos for blk in grad_kbuf], dtype=torch.long, device=self.device)
+        pos_addr[:] = torch.tensor([blk.pos for blk in grad_kbuf], dtype=torch.long, device='cpu')
 
     @staticmethod
     def add_specific_args(parser):
-        parser.add_argument('--memory_size', type=int, default=512, help="num blocks in memory bank")
-        parser.add_argument('--lr1', type=float, default=1e-3, help='learning rate of query encoder')
+        parser.add_argument('--memory_size', type=int, default=50, help="num blocks in memory bank")
+        parser.add_argument('--lr1', type=float, default=1e-4, help='learning rate of query encoder')
         parser.add_argument('--weight_decay1', type=float, default=0, help='weight decay of query encoder')
-        parser.add_argument('--lr2', type=float, default=5e-4, help='learning rate of key encoder')
+        parser.add_argument('--lr2', type=float, default=1e-4, help='learning rate of key encoder')
         parser.add_argument('--weight_decay2', type=float, default=0, help='weight decay of key encoder')
-        parser.add_argument('--max_key_num_per_gpu', type=int, default=4, help='gradient batch_size')
-        parser.add_argument('--max_query_num_per_gpu', type=int, default=4, help='query batch_size')
-        parser.add_argument('--temperature', type=float, default=1., help='temperature in softmax')
+        parser.add_argument('--max_key_num_per_gpu', type=int, default=6, help='gradient batch_size')
+        parser.add_argument('--max_query_num_per_gpu', type=int, default=3, help='query batch_size')
+        parser.add_argument('--temperature', type=float, default=0.1, help='temperature in softmax')
         parser.add_argument('--easy_size', type=int, default=1, help='num easy buffer for reasoning per qd sample')
         parser.add_argument('--hard_size', type=int, default=1, help='num hard buffer for reasoning per qd sample')

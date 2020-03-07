@@ -11,5 +11,8 @@ class MemoryBank():
     def get_addr(self, size):
         if self.p + size > self.__len__():
             self.p = 0
-        self.p += size
-        return self.data[self.p - size: self.p], self.pos[self.p - size: self.p]
+            l, r = len(self.data) - size, len(self.data)
+        else:
+            self.p += size
+            l, r = self.p - size, self.p
+        return self.data[l:r], self.pos[l:r]
