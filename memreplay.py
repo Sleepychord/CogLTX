@@ -18,14 +18,14 @@ def mem_replay(kenc, qenc, introspector, dbuf, qbuf, device, times=[2,2,1,1,1]):
     '''
     # TODO Here we assume the key embeddings can be generated in an one-time feed, FIX ME.
     kids, katt_masks, ktype_ids = dbuf.export_as_batch(device=device, add_cls=True) # each (key_batch_size, block_size)
-    keys = F.normalize(kenc(kids, katt_masks, ktype_ids)[1], dim=1) # keys (key_batch_size, hidden_size)
+    keys = F.normalize(kenc(kids, katt_masks, ktype_ids)[0].mean(dim=1), dim=1) # keys (key_batch_size, hidden_size)
 
     inputs = torch.zeros(3, 1, CAPACITY, dtype=torch.long, device=device)
     B_set = [] # the poses of B blks in qbuf
     for inc in times:
         num_to_keep = len(qbuf) + inc
         qbuf.export(out=(inputs[0, 0], inputs[1, 0], inputs[2, 0]))
-        query = F.normalize(qenc(*inputs)[1], dim=-1)
+        query = F.normalize(qenc(*inputs)[0].mean(dim=1), dim=-1)
         # batch_size of query is 1, so that the matmul becomes
         products = (keys * query.squeeze_(dim=0)).sum(dim=1)
 

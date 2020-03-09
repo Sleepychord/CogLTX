@@ -62,6 +62,7 @@ def prediction(config):
     with torch.no_grad():
         introspector = working_memory.introspector if config.introspect else None
         for qbuf, dbuf in tqdm(qd_dataset):
+            pdb.set_trace()
             buf, relevance_score = mem_replay(retriever.key_encoder, retriever.query_encoder, introspector, dbuf, qbuf, device=device) # TODO times hyperparam
             inputs = [t.unsqueeze(0) for t in buf.export(device=device)]
             output = working_memory.reasoner(*inputs)

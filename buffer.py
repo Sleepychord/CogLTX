@@ -1,9 +1,10 @@
 import torch
 from copy import copy
-from transformers import BertTokenizer
+from transformers import AutoTokenizer
 from utils import CAPACITY, BLOCK_SIZE
 import random
 class Block:
+    tokenizer = AutoTokenizer.from_pretrained('roberta-base')
     def __init__(self, ids, pos, blk_type=1, **kwargs):
         self.ids = ids
         self.pos = pos
@@ -15,6 +16,8 @@ class Block:
         return self.pos != rhs.pos or self.blk_type != rhs.blk_type
     def __len__(self):
         return len(self.ids)
+    def __str__(self):
+        return Block.tokenizer.convert_tokens_to_string(Block.tokenizer.convert_ids_to_tokens(self.ids))
 
 class Buffer:
     @staticmethod
@@ -70,6 +73,9 @@ class Buffer:
     
     def __getitem__(self, key):
         return self.blocks[key]
+
+    def __str__(self):
+        return ''.join([str(b)+'\n' for b in self.blocks])
         
     def clone(self):
         ret = Buffer()
