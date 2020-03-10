@@ -7,8 +7,6 @@ import json
 from transformers import AutoTokenizer
 
 from main_loop import main_loop, prediction, main_parser
-from retriever import Retriever
-from working_memory import WorkingMemory
 from models import QAReasoner
 from hotpotqa.hotpot_evaluate_utils import eval_func
 
@@ -64,8 +62,8 @@ if __name__ == "__main__":
     # ---------------------------------------------
     parser = main_parser(parser)
     parser.set_defaults(
-        train_source = os.path.join(root_dir, 'data', '2hotpotqa_train_roberta-base.pkl'),
-        test_source = os.path.join(root_dir, 'data', '2hotpotqa_test_roberta-base.pkl'),
+        train_source = os.path.join(root_dir, 'data', 'toy2hotpotqa_train_roberta-base.pkl'),
+        test_source = os.path.join(root_dir, 'data', 'toy2hotpotqa_test_roberta-base.pkl'),
         introspect = True
     )
     config = parser.parse_args()

@@ -42,7 +42,7 @@ class Introspector(BertPreTrainedModel):
         sequence_output = self.dropout(sequence_output)
         logits = self.classifier(sequence_output)
 
-        outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
+        outputs = logits
         if labels is not None:
             labels = labels.type_as(logits)
             loss_fct = torch.nn.BCEWithLogitsLoss()
@@ -54,7 +54,7 @@ class Introspector(BertPreTrainedModel):
                 loss = loss_fct(active_logits, active_labels)
             else:
                 loss = loss_fct(logits.view(-1), labels.view(-1))
-            outputs = loss
+            outputs = (loss, logits)
 
         return outputs  # (loss), scores, (hidden_states), (attentions)
 
@@ -81,7 +81,8 @@ class QAReasoner(Reasoner, BertPreTrainedModel):
 
         self.init_weights()
 
-    def export_labels(self, bufs, device):
+    @classmethod
+    def export_labels(cls, bufs, device):
         labels = torch.zeros(2, len(bufs), dtype=torch.long, device=device)
         crucials = []
         for i, buf in enumerate(bufs):

@@ -20,7 +20,7 @@ def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
         try:
             flag_ans = False
             question = [tokenizer.cls_token] + tokenizer.tokenize('yes no ' + data['question'])
-            q, q_property = [question], [[('relevance', 1), ('blk_type', 0)]]
+            q, q_property = [question], [[('relevance', 2), ('blk_type', 0)]]
             if suffix != 'test':
                 if data['answer'] in ['yes', 'no']:
                     pos = 1 + (data['answer'] == 'no')
@@ -62,7 +62,7 @@ def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
             else: 
                 logging.warning((data['_id'], data['question']))
 
-    with open(os.path.join(DATA_PATH, '2hotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
+    with open(os.path.join(DATA_PATH, 'hotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
         pickle.dump(batches, fout)
     with open(os.path.join(DATA_PATH, 'toy2hotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
         pickle.dump(batches[:500], fout)

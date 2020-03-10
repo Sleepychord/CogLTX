@@ -17,23 +17,22 @@ from models import Introspector, QAReasoner
 from utils import CAPACITY
 from buffer import buffer_collate
 
-class WorkingMemory(pl.LightningModule):
+class ReasonerModule(pl.LightningModule):
 
     def __init__(self, config):
-        super(WorkingMemory, self).__init__()
+        super(ReasonerModule, self).__init__()
         self.config = config
         self.hparams = deepcopy(config)
         if hasattr(self.hparams, 'gpus'):
             del self.hparams.gpus
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
-        self.introspector = Introspector.from_pretrained(config.model_name)
         self.reasoner = eval(config.reasoner_cls_name).from_pretrained(config.model_name)
 
     def on_save_checkpoint(self, checkpoint): 
         # to fix the bug of pytorch-lightning 6.0.0, will remove for future versions
         checkpoint['epoch'] += 1
         checkpoint['global_step'] += 1
-        print('saved working memory!')
+        print('saved reasoner!')
 
     def validation_step(self, batch, batch_idx):
         pass
@@ -51,7 +50,7 @@ class WorkingMemory(pl.LightningModule):
         pass
 
     def on_epoch_start(self):
-        self.device = next(self.introspector.parameters()).device
+        self.device = next(self.reasoner.parameters()).device
         self._file = open(os.path.join(self.config.tmp_dir, 'changes_{}.txt'.format(self.device)), 'w')
 
     def on_epoch_end(self):
@@ -59,12 +58,9 @@ class WorkingMemory(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
-            [
-                {'params': self.introspector.parameters()},
-                {'params': self.reasoner.parameters(), 'lr': self.config.lr4, 'weight_decay': self.config.weight_decay4}
-            ],
-            lr=self.config.lr3,
-            weight_decay=self.config.weight_decay3
+            self.reasoner.parameters(),
+            lr=self.config.lr2,
+            weight_decay=self.config.weight_decay2
             )
         scheduler = WarmupLinearLR(optimizer, self.config.step_size)
 
@@ -86,29 +82,22 @@ class WorkingMemory(pl.LightningModule):
         train_sampler = DistributedSampler(self.train_dataset)
         loader = DataLoader(
             dataset=self.train_dataset,
-            batch_size=self.config.max_reason_num_per_gpu,
+            batch_size=self.config.batch_size_reason_per_gpu,
             shuffle=False,
             sampler=train_sampler,
             num_workers=0,
             collate_fn=buffer_collate
         )
-        logging.info('train_dataset reloaded in Working Memory.')
+        logging.info('train_dataset reloaded in Reasoner.')
         return loader
 
     def _write_changes(self, blk, key, value):
-        if value is None:
-            if hasattr(blk, key):
-                delattr(blk, key)
-                self._file.write('{} {} {}\n'.format(blk.pos, key, value))
-        else:
-            if not hasattr(blk, key) or getattr(blk, key) != value:
-                setattr(blk, key, value)
-                self._file.write('{} {}\n'.format(blk.pos, key))
+        self._file.write('{} {} {}\n'.format(blk.pos, key, value))
 
     def _intervention(self, bufs, labels, crucials, loss_reasoner):
         loss_reasoner = loss_reasoner.detach()
         with torch.no_grad():
-            max_bs = self.config.max_reason_num_per_gpu * 2
+            max_bs = self.config.batch_size_reason_per_gpu * 2
             max_blk_num = max([len(buf) for buf in bufs])
             for i in range(len(bufs)):
                 ids, attn_masks, type_ids = bufs[i].export(device=self.device)
@@ -136,40 +125,32 @@ class WorkingMemory(pl.LightningModule):
                 t = 0
                 for blk in bufs[i]:
                     if blk in crucials[i]:
-                        self._write_changes(blk, 'relevance', 1)
+                        self._write_changes(blk, 'relevance', 2)
                     else:
-                        if losses_delta[t] >= self.config.relevance_threshold: # TODO topk
-                            self._write_changes(blk, 'relevance', 1)
-                        else:
-                            self._write_changes(blk, 'relevance', None)
+                        if losses_delta[t] >= self.config.levelup_threshold and blk.relevance < 2: # TODO topk
+                            self._write_changes(blk, 'relevance', blk.relevance + 1)
+                        elif losses_delta[t] <= self.config.leveldown_threshold and blk.relevance > -1:
+                            self._write_changes(blk, 'relevance', blk.relevance - 1)
                         t += 1
 
     def training_step(self, bufs, batch_idx):
         # Make inputs for reasoner
-        inputs = torch.zeros(4, len(bufs), CAPACITY, dtype=torch.long, device=self.device)
+        inputs = torch.zeros(3, len(bufs), CAPACITY, dtype=torch.long, device=self.device)
         for i, buf in enumerate(bufs):
             buf.export(out=(inputs[0, i], inputs[1, i], inputs[2, i]))
-        # Train the introspector after labeling
-        for i, buf in enumerate(bufs):
-            buf.export_relevance(device=self.device, out=inputs[3, i])
-
         # Extract the labels for reasoner, e.g. start and end position for QA reasoner
         labels, crucials = self.reasoner.export_labels(bufs, self.device) # TODO A
-        loss_reasoner = self.reasoner(*inputs[:3], labels=labels).mean()
+        loss_reasoner = self.reasoner(*inputs, labels=labels).mean()
         # Label the relevance by the current reasoner
-        if self.config.latent:
+        if self.config.latent:  
             self._intervention(bufs, labels, crucials, loss_reasoner)
-
-        loss_introspector = self.introspector(*inputs[:3], labels=inputs[3]) if self.config.introspect else 0
-        loss = loss_introspector + loss_reasoner
-        tensorboard_logs = {'loss': loss, 'loss_introspector': loss_introspector, 'loss_reasoner': loss_reasoner}
-        return {'loss': loss, 'log': tensorboard_logs}
+        tensorboard_logs = {'loss': loss_reasoner}
+        return {'loss': loss_reasoner, 'log': tensorboard_logs}
 
     @staticmethod
     def add_specific_args(parser):
-        parser.add_argument('--lr3', type=float, default=1e-4, help='learning rate of introspector')
-        parser.add_argument('--weight_decay3', type=float, default=0, help='weight decay of introspector')
-        parser.add_argument('--lr4', type=float, default=1e-4, help='learning rate of reasoner')
-        parser.add_argument('--weight_decay4', type=float, default=0, help='weight decay of reasoner')
-        parser.add_argument('--max_reason_num_per_gpu', type=int, default=2, help='gradient batch_size')
-
+        parser.add_argument('--lr2', type=float, default=1e-4, help='learning rate of reasoner')
+        parser.add_argument('--weight_decay2', type=float, default=0, help='weight decay of reasoner')
+        parser.add_argument('--batch_size_reason_per_gpu', type=int, default=4, help='gradient batch_size')
+        parser.add_argument('--levelup_threshold', type=float, default=0.2, help='gradient batch_size')
+        parser.add_argument('--leveldown_threshold', type=float, default=0, help='gradient batch_size')

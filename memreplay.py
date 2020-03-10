@@ -12,25 +12,30 @@ def _score_blocks(qbuf, relevance_token):
             relevance_blk[i] = relevance_token[ends[i-1]:ends[i]].mean()
     return relevance_blk
 
-def mem_replay(kenc, qenc, introspector, dbuf, qbuf, device, times=[2,2,1,1,1]):
+def mem_replay(introspector, qbuf, dbuf, device, times=[2,4], batch_size_inference=6):
     '''
         times: increased number of blocks each replay.
     '''
-    # TODO Here we assume the key embeddings can be generated in an one-time feed, FIX ME.
-    kids, katt_masks, ktype_ids = dbuf.export_as_batch(device=device, add_cls=True) # each (key_batch_size, block_size)
-    keys = F.normalize(kenc(kids, katt_masks, ktype_ids)[0].mean(dim=1), dim=1) # keys (key_batch_size, hidden_size)
-
-    inputs = torch.zeros(3, 1, CAPACITY, dtype=torch.long, device=device)
+    inputs = torch.zeros(3, batch_size_inference, CAPACITY, dtype=torch.long, device=device)
     B_set = [] # the poses of B blks in qbuf
     for inc in times:
         num_to_keep = len(qbuf) + inc
-        qbuf.export(out=(inputs[0, 0], inputs[1, 0], inputs[2, 0]))
-        query = F.normalize(qenc(*inputs)[0].mean(dim=1), dim=-1)
-        # batch_size of query is 1, so that the matmul becomes
-        products = (keys * query.squeeze_(dim=0)).sum(dim=1)
+        # stage one: continuous
+        estimations = torch.zeros(len(dbuf), device='cpu')
+        bufs, t = qbuf.fill(dbuf), 0
+        for i in range((len(bufs) - 1) // batch_size_inference + 1):
+            l, r = batch_size_inference * i, min(len(bufs), batch_size_inference * (i + 1))
+            for j, buf in enumerate(bufs[l:r]):
+                buf.export(out=(inputs[0, j], inputs[1, j], inputs[2, j]))
+            logits = introspector(*inputs[:,:r-l]).sigmoid_()
+            for j, buf in enumerate(bufs[l:r]):
+                estimation = _score_blocks(buf, logits[j])[len(qbuf):]
+                estimations[t: t + len(estimation)] = estimation
+                t += len(estimation)
+        assert t == len(dbuf)
 
         # fill the buffer up
-        indices = products.argsort(descending=True)
+        indices = estimations.argsort(descending=True)
         qbuf_size = qbuf.calc_size()
         for idx in indices:
             if qbuf_size + len(dbuf[idx]) > CAPACITY:
@@ -39,21 +44,15 @@ def mem_replay(kenc, qenc, introspector, dbuf, qbuf, device, times=[2,2,1,1,1]):
                 continue
             qbuf_size += len(dbuf[idx])
             qbuf.insert(dbuf[idx])
-        
-        # if introspector is not ready
-        if introspector is None:
-            return qbuf, None
 
         # keep only num_to_keep blks
         qbuf.export(out=(inputs[0, 0], inputs[1, 0], inputs[2, 0]))
-        relevance_token = torch.sigmoid(introspector(*inputs)[0].view(-1))
-
+        relevance_token = torch.sigmoid(introspector(*inputs[:, :1]).view(-1))
         relevance_blk = _score_blocks(qbuf, relevance_token)
-
         keeped_indices = relevance_blk.argsort(descending=True)
         if len(keeped_indices) > num_to_keep:
             keeped_indices = keeped_indices[:num_to_keep]
-        else:
+        else:   
             return qbuf, relevance_blk
         # manually filtering
         filtered_qbuf, filtered_relevance_blk = Buffer(), []

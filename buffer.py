@@ -9,6 +9,8 @@ class Block:
         self.ids = ids
         self.pos = pos
         self.blk_type = blk_type # 0 sentence A, 1 sentence B
+        self.relevance = 0
+        self.estimation = 0
         self.__dict__.update(kwargs)
     def __lt__(self, rhs):
         return self.blk_type < rhs.blk_type or (self.blk_type == rhs.blk_type and self.pos < rhs.pos)
@@ -104,9 +106,6 @@ class Buffer:
                     self.blocks.insert(index, b)
                     break
 
-    def delete(self):
-        pass
-
     def merge(self, buf):
         ret = Buffer()
         t1, t2 = 0, 0
@@ -131,45 +130,52 @@ class Buffer:
         else:
             return ret
             
-    def random_sample(self, size):
-        assert size <= len(self.blocks)
-        index = sorted(random.sample(range(len(self.blocks)), size))
-        ret = Buffer()
-        ret.blocks = [self.blocks[i] for i in index]
-        return ret
-
-    def fill_(self, buf, is_prior=None):
-        indices = list(range(len(buf)))
-        random.shuffle(indices)
-        # First fill the blks with priority
-        if is_prior is not None:
-            t = 0
-            for i, idx in enumerate(indices):
-                if is_prior(buf[idx]):
-                    indices[t], indices[i] = indices[i], indices[t]
-                    t += 1
-        tmp_size = self.calc_size()
-        for idx in indices:
-            if tmp_size + len(buf[idx]) > CAPACITY:
-                break
-            else:
-                tmp_size += len(buf[idx])
-                self.insert(buf[idx])
-        return self
-
+    # def random_sample(self, size):
+    #     assert size <= len(self.blocks)
+    #     index = sorted(random.sample(range(len(self.blocks)), size))
+    #     ret = Buffer()
+    #     ret.blocks = [self.blocks[i] for i in index]
+    #     return ret
+    # def fill_(self, buf, is_prior=None):
+    #     indices = list(range(len(buf)))
+    #     random.shuffle(indices)
+    #     # First fill the blks with priority
+    #     if is_prior is not None:
+    #         t = 0
+    #         for i, idx in enumerate(indices):
+    #             if is_prior(buf[idx]):
+    #                 indices[t], indices[i] = indices[i], indices[t]
+    #                 t += 1
+    #     tmp_size = self.calc_size()
+    #     for idx in indices:
+    #         if tmp_size + len(buf[idx]) > CAPACITY:
+    #             break
+    #         else:
+    #             tmp_size += len(buf[idx])
+    #             self.insert(buf[idx])
+    #     return self
+    # def marry(self, buf, size):
+    #     return [self.clone().fill_(buf) for i in range(size)]
+    
     def sort_(self):
         self.blocks.sort()
         return self
 
-    def marry(self, buf, size):
-        return [self.clone().fill_(buf) for i in range(size)]
+    def fill(self, buf):
+        ret, tmp_buf, tmp_size = [], self.clone(), self.calc_size()
+        for blk in buf:
+            if tmp_size + len(blk) > CAPACITY:
+                ret.append(tmp_buf)
+                tmp_buf, tmp_size = self.clone(), self.calc_size()
+            tmp_buf.blocks.append(blk)
+            tmp_size += len(blk)
+        ret.append(tmp_buf)
+        return ret
 
-    def export(self, device=None, length=None, out=None, add_cls=False):
+    def export(self, device=None, length=None, out=None):
         if out is None:
             if length is None:
                 total_length = self.calc_size()
-                if add_cls:
-                    total_length += len(self.blocks)
                 if total_length > CAPACITY:
                     raise ValueError('export inputs larger than capacity')
             else:
@@ -180,14 +186,11 @@ class Buffer:
             att_masks.zero_()
         t = 0
         for b in self.blocks:
-            if add_cls:
-                ids[t], att_masks[t] = 0, 1 # 0 is cls_id
-                t += 1
             ids[t:t + len(b)] = torch.tensor(b.ids, dtype=torch.long, device=device) # id
             # if b.blk_type == 1:
             #     type_ids[t:w] = 1 # sentence B
             att_masks[t:t + len(b)] = 1 # attention_mask
-            t += len(b) if length is None else (length - add_cls)
+            t += len(b) if length is None else length
         return ids, att_masks, type_ids
 
     def export_as_batch(self, device, length=BLOCK_SIZE+1, add_cls=False):
@@ -203,7 +206,7 @@ class Buffer:
         t = 0
         for b in self.blocks:
             w = t + (len(b) if length is None else length)
-            if hasattr(b, 'relevance'):
+            if b.relevance >= 1:
                 relevance[t: w] = 1
             t = w
         return relevance
@@ -212,5 +215,4 @@ def buffer_collate(batch): # does not collate
     return batch
 
 if __name__ == "__main__":
-    tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
-    document = ['']
+    pass
