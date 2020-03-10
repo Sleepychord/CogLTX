@@ -130,12 +130,12 @@ class Buffer:
         else:
             return ret
             
-    # def random_sample(self, size):
-    #     assert size <= len(self.blocks)
-    #     index = sorted(random.sample(range(len(self.blocks)), size))
-    #     ret = Buffer()
-    #     ret.blocks = [self.blocks[i] for i in index]
-    #     return ret
+    def random_sample(self, size):
+        assert size <= len(self.blocks)
+        index = sorted(random.sample(range(len(self.blocks)), size))
+        ret = Buffer()
+        ret.blocks = [self.blocks[i] for i in index]
+        return ret
     # def fill_(self, buf, is_prior=None):
     #     indices = list(range(len(buf)))
     #     random.shuffle(indices)

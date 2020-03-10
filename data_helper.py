@@ -100,6 +100,8 @@ class BlkPosInterface:
         for qbuf, dbuf in tqdm(self.dataset):
             #1. retrieve top n2*(max-len(pos)) estimations into buf 2. cut
             pbuf, nbuf = dbuf.filtered(lambda blk, idx: blk.relevance >= 1, need_residue=True)
+            if len(pbuf) >= max_blk_num - len(qbuf):
+                pbuf = pbuf.random_sample(max_blk_num - len(qbuf) - 1) 
             lb = max_blk_num - len(qbuf) - len(pbuf)
             estimations = torch.tensor([blk.estimation for blk in nbuf], dtype=torch.long)
             keeped_indices = estimations.argsort(descending=True)[:n2 * lb]
