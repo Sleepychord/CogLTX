@@ -42,7 +42,9 @@ def main_loop(config):
             early_stop_callback=False,
             check_val_every_n_epoch=1,
         )
-    for epoch in range(config.num_epochs):
+    min_epoch = min(find_lastest_checkpoint(os.path.join(config.save_dir, 'introspector', f'version_{config.version}', 'checkpoints'), epoch=True), find_lastest_checkpoint(os.path.join(config.save_dir, 'reasoner', f'version_{config.version}', 'checkpoints'), epoch=True)) + 1
+    logging.info(f'Continue training at epoch {min_epoch}...')
+    for epoch in range(min_epoch, config.num_epochs):
         intro_dataset = interface.build_random_buffer(num_samples=config.num_samples)
         introspector.set_dataset(intro_dataset)
         trainer = _create_new_trainer(epoch + 1, logger_intro)
@@ -82,7 +84,7 @@ def main_parser(parser=None):
     parser.add_argument('--version', type=int, default=0, help='the version to save or restore')
     parser.add_argument('--step_size', type=int, default=20000, help='the version to save or restore')
 
-    parser.add_argument('--num_samples', type=str, default='2,1,1', help='num of continous, discrete random samples and promising samples')
+    parser.add_argument('--num_samples', type=str, default='2,1,3', help='num of continous, discrete random samples and promising samples')
     parser.add_argument('--batch_size_inference', type=int, default=8, help='batch_size in memreplay')
     parser.add_argument('--latent', action='store_true', help='without relevance labels')
 
