@@ -19,7 +19,7 @@ def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
     for data in tqdm(dataset):
         try:
             flag_ans = False
-            question = [tokenizer.cls_token] + tokenizer.tokenize('yes no ' + data['question'])
+            question = [tokenizer.cls_token] + tokenizer.tokenize('yes no ' + data['question'].lower())
             q, q_property = [question], [[('relevance', 2), ('blk_type', 0)]]
             if suffix != 'test':
                 if data['answer'] in ['yes', 'no']:
@@ -31,10 +31,10 @@ def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
 
             d, properties = [], []
             for entity, sentences in data['context']:
-                tokenized_entity = tokenizer.tokenize(entity) + [tokenizer.sep_token]
+                tokenized_entity = tokenizer.tokenize(entity.lower()) + [tokenizer.pad_token]
                 bgn_idx = len(d)
                 for sen_idx, sen in enumerate(sentences):
-                    tokenized_sen = tokenized_entity + tokenizer.tokenize(sen)
+                    tokenized_sen = tokenized_entity + tokenizer.tokenize(sen.lower())
                     # if len(tokenized_sen) == 0: 
                     #     continue
                     d.append(tokenized_sen)
@@ -46,7 +46,7 @@ def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
                 for sup_entity, sup_idx in data['supporting_facts']:
                     if sup_entity == entity:
                         properties[bgn_idx + sup_idx].append(('relevance', 1))
-                        ret = find_start_end_after_tokenized(tokenizer, d[bgn_idx + sup_idx], [data['answer']])
+                        ret = find_start_end_after_tokenized(tokenizer, d[bgn_idx + sup_idx], [data['answer'].lower()])
                         if ret is not None:
                             start, end = ret[0]
                             properties[bgn_idx + sup_idx].extend([('start', start, 1), ('end', end, 1)])
@@ -54,6 +54,7 @@ def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
         except Exception as e:
             logging.error((data['_id'], e))
         else:
+            # pdb.set_trace()
             if flag_ans or suffix == 'test':
                 # batches.append((q, q_property, d, properties))
                 qbuf, cnt = Buffer.split_document_into_blocks(q, tokenizer, properties=q_property, cnt=cnt)
@@ -62,9 +63,9 @@ def process(DATA_PATH, HOTPOTQA_PATH, DEFAULT_MODEL_NAME, suffix='train'):
             else: 
                 logging.warning((data['_id'], data['question']))
 
-    with open(os.path.join(DATA_PATH, 'hotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
+    with open(os.path.join(DATA_PATH, 'lohotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
         pickle.dump(batches, fout)
-    with open(os.path.join(DATA_PATH, 'toy2hotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
+    with open(os.path.join(DATA_PATH, 'toylohotpotqa_{}_{}.pkl'.format(suffix, DEFAULT_MODEL_NAME)), 'wb') as fout:
         pickle.dump(batches[:500], fout)
 
 
@@ -79,4 +80,4 @@ if __name__ == "__main__":
     DATA_PATH = os.path.join(root_dir, 'data')
     os.makedirs(DATA_PATH, exist_ok=True)
     process(DATA_PATH, HOTPOTQA_PATH_test, DEFAULT_MODEL_NAME, 'test')
-    process(DATA_PATH, HOTPOTQA_PATH_train, DEFAULT_MODEL_NAME, 'train')
+    # process(DATA_PATH, HOTPOTQA_PATH_train, DEFAULT_MODEL_NAME, 'train')
