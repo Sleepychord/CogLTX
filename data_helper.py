@@ -114,8 +114,9 @@ class BlkPosInterface:
 
 def find_lastest_checkpoint(checkpoints_dir, epoch=False):
     lastest = (-1, '')
-    for shortname in os.listdir(checkpoints_dir):
-        m = re.match(r'_ckpt_epoch_(\d+).+', shortname)
-        if m is not None and int(m.group(1)) > lastest[0]:
-            lastest = (int(m.group(1)), shortname)
+    if os.path.exists(checkpoints_dir):
+        for shortname in os.listdir(checkpoints_dir):
+            m = re.match(r'_ckpt_epoch_(\d+).+', shortname)
+            if m is not None and int(m.group(1)) > lastest[0]:
+                lastest = (int(m.group(1)), shortname)
     return os.path.join(checkpoints_dir, lastest[-1]) if not epoch else lastest[0]

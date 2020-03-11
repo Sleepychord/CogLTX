@@ -42,10 +42,7 @@ def main_loop(config):
             early_stop_callback=False,
             check_val_every_n_epoch=1,
         )
-    if os.path.exists(os.path.join(config.save_dir, 'introspector', f'version_{config.version}')):
-        min_epoch = min(find_lastest_checkpoint(os.path.join(config.save_dir, 'introspector', f'version_{config.version}', 'checkpoints'), epoch=True), find_lastest_checkpoint(os.path.join(config.save_dir, 'reasoner', f'version_{config.version}', 'checkpoints'), epoch=True)) + 1
-    else:
-        min_epoch = 0
+    min_epoch = min(find_lastest_checkpoint(os.path.join(config.save_dir, 'introspector', f'version_{config.version}', 'checkpoints'), epoch=True), find_lastest_checkpoint(os.path.join(config.save_dir, 'reasoner', f'version_{config.version}', 'checkpoints'), epoch=True)) + 1
     logging.info(f'Continue training at epoch {min_epoch}...')
     for epoch in range(min_epoch, config.num_epochs):
         intro_dataset = interface.build_random_buffer(num_samples=config.num_samples)
