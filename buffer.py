@@ -4,7 +4,7 @@ from transformers import AutoTokenizer
 from utils import CAPACITY, BLOCK_SIZE
 import random
 class Block:
-    tokenizer = AutoTokenizer.from_pretrained('roberta-base')
+    tokenizer = AutoTokenizer.from_pretrained('roberta-large')
     def __init__(self, ids, pos, blk_type=1, **kwargs):
         self.ids = ids
         self.pos = pos

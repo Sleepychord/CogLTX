@@ -10,7 +10,7 @@ from main_loop import main_loop, prediction, main_parser
 from models import QAReasoner
 from hotpotqa.hotpot_evaluate_utils import eval_func
 
-def logits2span(start_logits, end_logits, top_k=3):
+def logits2span(start_logits, end_logits, top_k=5):
     top_start_logits, top_start_indices = torch.topk(start_logits.squeeze_(0), k=top_k)
     top_end_logits, top_end_indices = torch.topk(end_logits.squeeze_(0), k=top_k)
     ret = []
@@ -30,7 +30,7 @@ def extract_supporing_facts(config, buf, score, start, end):
     ret = []
     # the result sentence
     for i, sen_end in enumerate(buf.block_ends()):
-        if end >= sen_end:
+        if sen_end >= end:
             if buf[i].blk_type > 0:
                 ret.append(list(buf[i].origin))
             break
@@ -47,7 +47,7 @@ def extract_supporing_facts(config, buf, score, start, end):
     for i, blk in enumerate(buf):
         if buf[i].blk_type > 0:
             entity, sen_idx = blk.origin
-            if sen_idx == 0 and entity in gold_entities and score[i] > config.sp_threshold:
+            if entity in gold_entities and score[i] + 0.05 * int(sen_idx == 0) > config.sp_threshold:
                 ret.append([entity, sen_idx])
     return ret
 
@@ -57,7 +57,7 @@ if __name__ == "__main__":
     root_dir = os.path.abspath(os.path.dirname(__file__))
     parser = ArgumentParser(add_help=False)
     # ------------ add hotpotqa argument ----------
-    parser.add_argument('--sp_threshold', type=int, default=0.8)
+    parser.add_argument('--sp_threshold', type=int, default=0.9)
     parser.add_argument('--only_predict', action='store_true')
     # ---------------------------------------------
     parser = main_parser(parser)
