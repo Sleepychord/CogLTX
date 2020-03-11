@@ -4,7 +4,7 @@ import re
 import string
 from collections import Counter
 import pickle
-
+    
 def normalize_answer(s):
 
     def remove_articles(text):
