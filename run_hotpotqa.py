@@ -17,9 +17,9 @@ def logits2span(start_logits, end_logits, top_k=5):
     for start_pos in top_start_indices:
         for end_pos in top_end_indices:
             if end_pos - start_pos < 0:
-                adds = -10000
+                adds = -100000
             elif end_pos - start_pos > 8:
-                adds = -10
+                adds = -10000
             else:
                 adds = 0
             ret.append((adds + start_logits[start_pos] + end_logits[end_pos], start_pos, end_pos))
@@ -47,7 +47,7 @@ def extract_supporing_facts(config, buf, score, start, end):
     for i, blk in enumerate(buf):
         if buf[i].blk_type > 0:
             entity, sen_idx = blk.origin
-            if entity in gold_entities and score[i] + 0.05 * int(sen_idx == 0) > config.sp_threshold:
+            if entity in gold_entities and score[i] + 0.05 * int(sen_idx == 0) > config.sp_threshold and [entity, sen_idx] not in ret:
                 ret.append([entity, sen_idx])
     return ret
 
@@ -62,8 +62,8 @@ if __name__ == "__main__":
     # ---------------------------------------------
     parser = main_parser(parser)
     parser.set_defaults(
-        train_source = os.path.join(root_dir, 'data', 'toylohotpotqa_train_roberta-base.pkl'),
-        test_source = os.path.join(root_dir, 'data', 'toylohotpotqa_test_roberta-base.pkl'),
+        train_source = os.path.join(root_dir, 'data', 'lohotpotqa_train_roberta-base.pkl'),
+        test_source = os.path.join(root_dir, 'data', 'lohotpotqa_test_roberta-base.pkl'),
         introspect = True
     )
     config = parser.parse_args()
@@ -77,7 +77,7 @@ if __name__ == "__main__":
         _id = qbuf[0]._id
         start, end = logits2span(*output)
         ans_ids = ids[start: end]
-        ans[_id] = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(ans_ids)).strip()
+        ans[_id] = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(ans_ids)).strip().replace('</s>', '')
         # supporting facts
         sp[_id] = extract_supporing_facts(config, buf, relevance_score, start, end)
     with open(os.path.join(config.tmp_dir, 'pred.json'), 'w') as fout:

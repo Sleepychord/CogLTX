@@ -12,7 +12,7 @@ def _score_blocks(qbuf, relevance_token):
             relevance_blk[i] = relevance_token[ends[i-1]:ends[i]].mean()
     return relevance_blk
 
-def mem_replay(introspector, qbuf, dbuf, device, times=[2,3], batch_size_inference=10   ):
+def mem_replay(introspector, qbuf, dbuf, device, times=[2,3], batch_size_inference=12):
     '''
         times: increased number of blocks each replay.
     '''
