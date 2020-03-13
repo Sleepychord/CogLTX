@@ -1,8 +1,9 @@
 from fuzzywuzzy import fuzz, process as fuzzy_process
 import re
 import numpy as np
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 import torch
+import pdb
 
 def dp(a, b):
     """A basic Dynamic programming for Edit-distance based fuzzy matching.
@@ -122,25 +123,25 @@ def find_start_end_after_tokenized(tokenizer, tokenized_text, spans: ['Obama Car
     """
     end_offset, ret = [], []
     for x in tokenized_text:
-        offset = len(x) + (end_offset[-1] if len(end_offset) > 0 else -1)
+        offset = end_offset[-1] if len(end_offset) > 0 else -1
+        if x != '<pad>':
+            offset += len(x)
         end_offset.append(offset)
-    text = ''.join(tokenized_text)
+    text = ''.join(tokenized_text).replace('<pad>', '')
     for span in spans:
-        t = ''.join(tokenizer.tokenize(span))
+        t = ''.join(tokenizer.tokenize(span)).replace('<pad>', '')
         start = text.find(t)
         if start >= 0:
             end = start + len(t) - 1 # include end
         else:
             result = fuzzy_find([t], text)
-            if len(result) == 0:    
-                result = fuzzy_find([re.sub(tokenizer.unk_token, '', t)], text)
-                if len(result) == 0:
-                    return None # cannot find exact match
+            if len(result) == 0:
+                return None # cannot find exact match
             _, _, start, end = result[0]
             end -= 1
-        ret.append((bisect_left(end_offset, start), bisect_left(end_offset, end)))
+        ret.append((bisect_right(end_offset, start) - 1, bisect_right(end_offset, end) - 1))
     return ret
-    
+
 def find_start_end_before_tokenized(tokenizer, orig_text, span: 'Obama[unk]care'):
     """Find start and end positions of tokenized spans in untokenized text.
     
