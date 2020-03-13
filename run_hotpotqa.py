@@ -18,8 +18,10 @@ def logits2span(start_logits, end_logits, top_k=5):
         for end_pos in top_end_indices:
             if end_pos - start_pos < 0:
                 adds = -100000
-            elif end_pos - start_pos > 15:
+            elif end_pos - start_pos > 20:
                 adds = -20
+            elif end_pos - start_pos > 8:
+                adds = -5
             else:
                 adds = 0
             ret.append((adds + start_logits[start_pos] + end_logits[end_pos], start_pos, end_pos))
@@ -62,8 +64,8 @@ if __name__ == "__main__":
     # ---------------------------------------------
     parser = main_parser(parser)
     parser.set_defaults(
-        train_source = os.path.join(root_dir, 'data', 'hotpotqa_train_roberta-base.pkl'),
-        test_source = os.path.join(root_dir, 'data', 'hotpotqa_test_roberta-base.pkl'),
+        train_source = os.path.join(root_dir, 'data', 'capshotpotqa_train_roberta-base.pkl'),
+        test_source = os.path.join(root_dir, 'data', 'capshotpotqa_test_roberta-base.pkl'),
         introspect = True
     )
     config = parser.parse_args()
@@ -77,8 +79,8 @@ if __name__ == "__main__":
         _id = qbuf[0]._id
         start, end = logits2span(*output)
         ans_ids = ids[start: end]
-        ans[_id] = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(ans_ids)).strip().replace('</s>', '')
-        # supporting facts
+        ans[_id] = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(ans_ids)).replace('</s>', '').replace('<pad>', '').strip()
+        # supporting facts  
         sp[_id] = extract_supporing_facts(config, buf, relevance_score, start, end)
     with open(os.path.join(config.tmp_dir, 'pred.json'), 'w') as fout:
         pred = {'answer': ans, 'sp': sp}
