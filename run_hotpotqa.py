@@ -64,8 +64,8 @@ if __name__ == "__main__":
     # ---------------------------------------------
     parser = main_parser(parser)
     parser.set_defaults(
-        train_source = os.path.join(root_dir, 'data', 'lohotpotqa_train_roberta-base.pkl'),
-        test_source = os.path.join(root_dir, 'data', 'lohotpotqa_test_roberta-base.pkl'),
+        train_source = os.path.join(root_dir, 'data', 'capshotpotqa_train_roberta-base.pkl'),
+        test_source = os.path.join(root_dir, 'data', 'capshotpotqa_test_roberta-base.pkl'),
         introspect = True
     )
     config = parser.parse_args()
