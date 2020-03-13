@@ -18,8 +18,8 @@ def logits2span(start_logits, end_logits, top_k=5):
         for end_pos in top_end_indices:
             if end_pos - start_pos < 0:
                 adds = -100000
-            elif end_pos - start_pos > 8:
-                adds = -10000
+            elif end_pos - start_pos > 15:
+                adds = -20
             else:
                 adds = 0
             ret.append((adds + start_logits[start_pos] + end_logits[end_pos], start_pos, end_pos))
