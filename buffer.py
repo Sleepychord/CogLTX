@@ -1,10 +1,11 @@
 import torch
 from copy import copy
 from transformers import AutoTokenizer
-from utils import CAPACITY, BLOCK_SIZE
+from utils import CAPACITY, BLOCK_SIZE, DEFAULT_MODEL_NAME
 import random
+from bisect import bisect_left
 class Block:
-    tokenizer = AutoTokenizer.from_pretrained('roberta-large')
+    tokenizer = AutoTokenizer.from_pretrained(DEFAULT_MODEL_NAME)
     def __init__(self, ids, pos, blk_type=1, **kwargs):
         self.ids = ids
         self.pos = pos
@@ -38,7 +39,7 @@ class Buffer:
         updiv = lambda a,b: (a - 1) // b + 1
         if hard:
             for sid, tsen in enumerate(d):
-                psen = properties[sid]
+                psen = properties[sid] if properties is not None else []
                 # if len(tsen) == 0:
                 #     print(d)
                 num = updiv(len(tsen), BLOCK_SIZE - 1) # cls

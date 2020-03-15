@@ -139,7 +139,7 @@ def find_start_end_after_tokenized(tokenizer, tokenized_text, spans: ['Obama Car
                 return None # cannot find exact match
             _, _, start, end = result[0]
             end -= 1
-        ret.append((bisect_right(end_offset, start) - 1, bisect_right(end_offset, end) - 1))
+        ret.append((bisect_left(end_offset, start), bisect_left(end_offset, end)))
     return ret
 
 def find_start_end_before_tokenized(tokenizer, orig_text, span: 'Obama[unk]care'):
