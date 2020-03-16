@@ -10,6 +10,8 @@ import pickle
 import logging
 import pdb
 from bisect import bisect_left
+import string
+
 
 root_dir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 sys.path.append(root_dir)
@@ -23,9 +25,10 @@ with open(os.path.join(data_dir, 'combined-newsqa-data-v1.json'), 'r') as fin:
     dataset = json.load(fin)
 
 # %%
+invalid_chrs = set(string.punctuation + string.whitespace)
 tokenizer = AutoTokenizer.from_pretrained(DEFAULT_MODEL_NAME)
-train_batches, test_json, cnt = [], {}, 0
-for data in tqdm(dataset['data'][:500]):
+train_batches, test_json, test_batches, cnt = [], {}, [], 0
+for data in tqdm(dataset['data']):
     sentences = data['text'].split('\n\n\n\n')
     sen_offsets = []
     for i, sen in enumerate(sentences):
@@ -47,21 +50,26 @@ for data in tqdm(dataset['data'][:500]):
                 q_property[0].extend([('start', 1, 1), ('end', 1, 1)])
                 flag_ans = True
             elif 's' in raw_q['consensus']:
+                s, e = raw_q['consensus']['s'], raw_q['consensus']['e']
+                while e > s and data['text'][e - 1] in invalid_chrs:
+                    e -= 1
+                if s >= e:
+                    logging.warning(f"the span is invalid. {qid} {data['text'][s:e]}")
+                    continue
                 # find relevance
-                start_sen_idx, end_sen_idx = bisect_left(sen_offsets, raw_q['consensus']['s']), bisect_left(sen_offsets, raw_q['consensus']['e'] - 1)
+                start_sen_idx, end_sen_idx = bisect_left(sen_offsets, s), bisect_left(sen_offsets, e)
                 if start_sen_idx != end_sen_idx:
-                    logging.warning(f"s and e are not in the same sentence. {qid} {data['text'][raw_q['consensus']['s']:raw_q['consensus']['e']]}")
+                    logging.warning(f"s and e are not in the same sentence. {qid} {data['text'][s:e]}")
                 else:
                     d_properties[start_sen_idx].append(('relevance', 3))
                     flag_ans = True
-                    s, e = raw_q['consensus']['s'], raw_q['consensus']['e']
-                    s, e = find_start_end_after_tokenized(tokenizer, tokenized_sentences[start_sen_idx], [data['text'][s:e]])[0]
-                    d_properties[start_sen_idx].extend([('start', s, 1), ('end', e, 1)])
-        except Exception as e:
-            if isinstance(e, KeyboardInterrupt):
+                    ss, ee = find_start_end_after_tokenized(tokenizer, tokenized_sentences[start_sen_idx], [data['text'][s:e]])[0]
+                    d_properties[start_sen_idx].extend([('start', ss, 1), ('end', ee, 1)])
+        except Exception as err:
+            if isinstance(err, KeyboardInterrupt):
                 raise KeyboardInterrupt
-            raise e
-            logging.error((qid, e))
+            raise err
+            logging.error((qid, err))
         else:
             # pdb.set_trace()
             if flag_ans:
@@ -75,13 +83,16 @@ for data in tqdm(dataset['data'][:500]):
                 if data['type'] != 'test':
                     train_batches.append((qbuf, dbuf))
                 else:
-                    test_json[qid] = 'None' if 'noAnswer' in raw_q['consensus'] else (data['text'][raw_q['consensus']['s']:raw_q['consensus']['e']]) 
+                    test_batches.append((qbuf, dbuf))
+                    test_json[qid] = 'None' if 'noAnswer' in raw_q['consensus'] else (data['text'][s:e]) 
             else: 
                 logging.warning((qid, raw_q['q']))
 
 # %%
 DATA_PATH = os.path.join(root_dir, 'data')
-with open(os.path.join(DATA_PATH, 'toynewsqa_{}_{}.pkl'.format('train', DEFAULT_MODEL_NAME)), 'wb') as fout:
+with open(os.path.join(DATA_PATH, 'newsqa_{}_{}.pkl'.format('train', DEFAULT_MODEL_NAME)), 'wb') as fout:
     pickle.dump(train_batches, fout)
-# with open(os.path.join(DATA_PATH, 'newsqa_test.json'), 'w') as fout:
-#     json.dump(test_json, fout)
+with open(os.path.join(DATA_PATH, 'newsqa_{}_{}.pkl'.format('test', DEFAULT_MODEL_NAME)), 'wb') as fout:
+    pickle.dump(test_batches, fout)
+with open(os.path.join(DATA_PATH, 'newsqa_test.json'), 'w') as fout:
+    json.dump(test_json, fout)
