@@ -29,10 +29,14 @@ invalid_chrs = set(string.punctuation + string.whitespace)
 tokenizer = AutoTokenizer.from_pretrained(DEFAULT_MODEL_NAME)
 train_batches, test_json, test_batches, cnt = [], {}, [], 0
 for data in tqdm(dataset['data']):
-    sentences = data['text'].split('\n\n\n\n')
-    sen_offsets = []
-    for i, sen in enumerate(sentences):
-        sen_offsets.append(len(sen) + 4 + (sen_offsets[-1] if i > 0 else -1))
+    # sentences = re.split(r'\n+', data['text'])
+    last_newline, sentences, sen_offsets = -1, [], []
+    for i, ch in enumerate(data['text']+'\n'):
+        if ch == '\n':
+            if last_newline + 1 < i:
+                sentences.append(data['text'][last_newline + 1: i])
+                sen_offsets.append(i)
+            last_newline = i
     tokenized_sentences = [tokenizer.tokenize(sen) for sen in sentences]
     article_buf = None
 
@@ -40,7 +44,7 @@ for data in tqdm(dataset['data']):
         try:
             flag_ans = False
             qid = f'{data["storyId"]}_{i}'
-            if 'badQuestion' in raw_q['consensus']:
+            if 'isQuestionBad' in raw_q and raw_q['isQuestionBad'] > 0 or 'badQuestion' in raw_q['consensus']:
                 continue
             question = [tokenizer.cls_token] + tokenizer.tokenize('None ' + raw_q['q'])
             q, q_property = [question], [[('relevance', 3), ('blk_type', 0), ('_id', qid)]]
@@ -60,11 +64,16 @@ for data in tqdm(dataset['data']):
                 start_sen_idx, end_sen_idx = bisect_left(sen_offsets, s), bisect_left(sen_offsets, e)
                 if start_sen_idx != end_sen_idx:
                     logging.warning(f"s and e are not in the same sentence. {qid} {data['text'][s:e]}")
+                    continue
                 else:
                     d_properties[start_sen_idx].append(('relevance', 3))
-                    flag_ans = True
-                    ss, ee = find_start_end_after_tokenized(tokenizer, tokenized_sentences[start_sen_idx], [data['text'][s:e]])[0]
-                    d_properties[start_sen_idx].extend([('start', ss, 1), ('end', ee, 1)])
+                    ret = find_start_end_after_tokenized(tokenizer, tokenized_sentences[start_sen_idx], [data['text'][s:e]])
+                    if ret is not None:
+                        ss, ee = ret[0]
+                        d_properties[start_sen_idx].extend([('start', ss, 1), ('end', ee, 1)])
+                        flag_ans = True
+                    else:
+                        logging.warning(f"remapping fails. {qid} {data['text'][s:e]}")
         except Exception as err:
             if isinstance(err, KeyboardInterrupt):
                 raise KeyboardInterrupt
