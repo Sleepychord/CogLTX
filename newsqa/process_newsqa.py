@@ -44,10 +44,9 @@ for data in tqdm(dataset['data']):
         try:
             flag_ans = False
             qid = f'{data["storyId"]}_{i}'
-            if 'isQuestionBad' in raw_q and raw_q['isQuestionBad'] > 0 or 'badQuestion' in raw_q['consensus'] or 'noAnswer' in raw_q['consensus']:
+            if 'isQuestionBad' in raw_q and raw_q['isQuestionBad'] > 0 or 'badQuestion' in raw_q['consensus']:
                 continue
-            # question = [tokenizer.cls_token] + tokenizer.tokenize('None ' + raw_q['q'])
-            question = [tokenizer.cls_token] + tokenizer.tokenize(raw_q['q'])
+            question = [tokenizer.cls_token] + tokenizer.tokenize('None ' + raw_q['q'])
             q, q_property = [question], [[('relevance', 3), ('blk_type', 0), ('_id', qid)]]
 
             d_properties = [[] for sen in sentences]
@@ -100,9 +99,9 @@ for data in tqdm(dataset['data']):
 
 # %%
 DATA_PATH = os.path.join(root_dir, 'data')
-with open(os.path.join(DATA_PATH, 'hansnewsqa_{}_{}.pkl'.format('train', DEFAULT_MODEL_NAME)), 'wb') as fout:
+with open(os.path.join(DATA_PATH, 'newsqa_{}_{}.pkl'.format('train', DEFAULT_MODEL_NAME)), 'wb') as fout:
     pickle.dump(train_batches, fout)
-with open(os.path.join(DATA_PATH, 'hansnewsqa_{}_{}.pkl'.format('test', DEFAULT_MODEL_NAME)), 'wb') as fout:
+with open(os.path.join(DATA_PATH, 'newsqa_{}_{}.pkl'.format('test', DEFAULT_MODEL_NAME)), 'wb') as fout:
     pickle.dump(test_batches, fout)
 with open(os.path.join(DATA_PATH, 'newsqa_test.json'), 'w') as fout:
     json.dump(test_json, fout)

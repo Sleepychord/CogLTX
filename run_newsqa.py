@@ -54,8 +54,8 @@ if __name__ == "__main__":
     # ---------------------------------------------
     parser = main_parser(parser)
     parser.set_defaults(
-        train_source = os.path.join(root_dir, 'data', 'hansnewsqa_train_roberta-base.pkl'),
-        test_source = os.path.join(root_dir, 'data', 'hansnewsqa_test_roberta-base.pkl')
+        train_source = os.path.join(root_dir, 'data', 'newsqa_train_roberta-large.pkl'),
+        test_source = os.path.join(root_dir, 'data', 'newsqa_test_roberta-large.pkl')
     )
     config = parser.parse_args()
     config.reasoner_cls_name = 'QAReasoner'
