@@ -19,7 +19,7 @@ from data_helper import SimpleListDataset, BlkPosInterface, find_lastest_checkpo
 from introspector_module import IntrospectorModule
 from reasoner_module import ReasonerModule
 from memreplay import mem_replay
-
+from initialize_relevance import init_relevance
 
 def main_loop(config):
     os.makedirs(config.tmp_dir, exist_ok=True)
@@ -30,8 +30,7 @@ def main_loop(config):
     logger_intro = TensorBoardLogger(config.log_dir, name='introspector', version=config.version)
     logger_reason = TensorBoardLogger(config.log_dir, name='reasoner', version=config.version)
     if config.latent:
-        # TODO Label the initial relavance
-        raise NotImplementedError
+        init_relevance(qd_dataset)
     def _create_new_trainer(epoch, logger):
         return Trainer(max_epochs=epoch, 
             gpus=config.gpus, 

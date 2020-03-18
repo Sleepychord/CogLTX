@@ -9,16 +9,31 @@ def _score_blocks(qbuf, relevance_token):
     relevance_blk = torch.ones(len(ends), device='cpu')
     for i in range(len(ends)): 
         if qbuf[i].blk_type > 0: # query
-            relevance_blk[i] = relevance_token[ends[i-1]:ends[i]].mean()
+            relevance_blk[i] = (relevance_token[ends[i-1]:ends[i]]).mean()
     return relevance_blk
 
-def mem_replay(introspector, qbuf, dbuf, device, times=[2,3], batch_size_inference=12):
+def positional_smoothing(buf, relevance_blk, factor_forward=0.1, factor_backward=0.3):
+    ret = torch.zeros_like(relevance_blk)
+    for i, blk in enumerate(buf):
+        rest = 1.   
+        if i > 0 and buf[i-1].pos == blk.pos - 1:
+            rest -= factor_forward
+            ret[i] += relevance_blk[i-1] * factor_forward
+        if i < len(buf) - 1 and buf[i+1].pos == blk.pos + 1:
+            rest -= factor_backward
+            ret[i] += relevance_blk[i+1] * factor_backward
+        ret[i] += relevance_blk[i] * rest
+        ret[i] = max(ret[i], relevance_blk[i])
+    return ret
+
+def mem_replay(introspector, qbuf, dbuf, device, times='3,5', batch_size_inference=16):
     '''
         times: increased number of blocks each replay.
     '''
+    times = [int(x) for x in times.split(',')]
     inputs = torch.zeros(3, batch_size_inference, CAPACITY, dtype=torch.long, device=device)
     B_set = [] # the poses of B blks in qbuf
-    for inc in times:
+    for k, inc in enumerate(times):
         num_to_keep = len(qbuf) + inc
         # stage one: continuous
         estimations = torch.zeros(len(dbuf), device='cpu')
@@ -34,6 +49,7 @@ def mem_replay(introspector, qbuf, dbuf, device, times=[2,3], batch_size_inferen
                 t += len(estimation)
         assert t == len(dbuf)
 
+        # estimations = positional_smoothing(dbuf, estimations)
         # fill the buffer up
         indices = estimations.argsort(descending=True)
         qbuf_size = qbuf.calc_size()
@@ -50,7 +66,7 @@ def mem_replay(introspector, qbuf, dbuf, device, times=[2,3], batch_size_inferen
         relevance_token = torch.sigmoid(introspector(*inputs[:, :1]).view(-1))
         relevance_blk = _score_blocks(qbuf, relevance_token)
         keeped_indices = relevance_blk.argsort(descending=True)
-        if len(keeped_indices) > num_to_keep:
+        if len(keeped_indices) > num_to_keep and k < len(times) - 1:
             keeped_indices = keeped_indices[:num_to_keep]
         else:   
             return qbuf, relevance_blk
