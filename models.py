@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from transformers import BertPreTrainedModel, RobertaConfig, RobertaModel, ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP
+from transformers import BertPreTrainedModel, RobertaConfig, RobertaModel, ROBERTA_PRETRAINED_MODEL_ARCHIVE_MAP, RobertaForSequenceClassification
 from torch.nn import CrossEntropyLoss
 
 class Introspector(BertPreTrainedModel):
@@ -64,7 +64,7 @@ class Reasoner(object): # Interface
     def export_labels(self, bufs, device):
         raise NotImplementedError
         # return (labels: consistent with forward, crucials: list of list of blks)
-    def forward(self, ids, attn_masks, type_ids, labels, *args, **kwargs):
+    def forward(self, ids, attn_masks=None, type_ids=None, labels=None, **kwargs):
         raise NotImplementedError
         # return (loss, ) if labels is not None else ...
 
@@ -92,7 +92,7 @@ class QAReasoner(Reasoner, BertPreTrainedModel):
                     labels[0, i] = t + b.start[0]
                 if hasattr(b, 'end'):
                     labels[1, i] = t + b.end[0]
-                if hasattr(b, 'start') or hasattr(b, 'end'):
+                if hasattr(b, 'start') or hasattr(b, 'end') or b.blk_type == 0:
                     crucial.append(b)
                 t += len(b)
             crucials.append(crucial)
@@ -136,10 +136,57 @@ class QAReasoner(Reasoner, BertPreTrainedModel):
             start_positions.clamp_(0, ignored_index)
             end_positions.clamp_(0, ignored_index)
 
-            loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
+            loss_fct = CrossEntropyLoss(ignore_index=ignored_index, reduction='none')
             start_loss = loss_fct(start_logits, start_positions)
             end_loss = loss_fct(end_logits, end_positions)
             total_loss = (start_loss + end_loss) / 2
             outputs = total_loss
 
         return outputs  # (loss), start_logits, end_logits, (hidden_states), (attentions)
+
+
+class ClassificationReasoner(RobertaForSequenceClassification, Reasoner):
+    
+    def __init__(self, config):
+        super(ClassificationReasoner, self).__init__(config)
+
+    @classmethod
+    def export_labels(cls, bufs, device):
+        labels = torch.zeros(len(bufs), dtype=torch.long, device=device)
+        for i, buf in enumerate(bufs):
+            labels[i] = int(buf[0].label)
+        return labels, [[b for b in buf if b.blk_type == 0] for buf in bufs]
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        labels=None,
+    ):
+        outputs = self.roberta(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+        )
+        sequence_output = outputs[0]
+        logits = self.classifier(sequence_output)
+
+        outputs = (logits,) + outputs[2:]
+        if labels is not None:
+            if self.num_labels == 1:
+                #  We are doing regression
+                loss_fct = MSELoss()
+                loss = loss_fct(logits.view(-1), labels.view(-1))
+            else:
+                loss_fct = CrossEntropyLoss(reduction='none')
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+            outputs = (loss,) + outputs
+
+        return outputs  # (loss), logits, (hidden_states), (attentions)

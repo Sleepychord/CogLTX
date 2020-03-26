@@ -13,8 +13,8 @@ import pytorch_lightning as pl
 from transformers import AutoTokenizer, AutoModel
 
 from optimization import WarmupLinearLR
-from models import Introspector, QAReasoner
-from utils import CAPACITY
+from models import *
+from utils import CAPACITY, ForkedPdb
 from buffer import buffer_collate
 
 class ReasonerModule(pl.LightningModule):
@@ -26,7 +26,8 @@ class ReasonerModule(pl.LightningModule):
         if hasattr(self.hparams, 'gpus'):
             del self.hparams.gpus
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
-        self.reasoner = eval(config.reasoner_cls_name).from_pretrained(config.model_name)
+        reasnoer_config = dict([(k[16:], v) for k,v in config.__dict__.items() if k.startswith('reasoner_config_')])
+        self.reasoner = eval(config.reasoner_cls_name).from_pretrained(config.model_name, **reasnoer_config)
 
     def on_save_checkpoint(self, checkpoint): 
         # to fix the bug of pytorch-lightning 6.0.0, will remove for future versions
@@ -97,11 +98,11 @@ class ReasonerModule(pl.LightningModule):
     def _intervention(self, bufs, labels, crucials, loss_reasoner):
         loss_reasoner = loss_reasoner.detach()
         with torch.no_grad():
-            max_bs = self.config.batch_size_reason_per_gpu * 2
+            max_bs = self.config.batch_size_reason_per_gpu * 4
             max_blk_num = max([len(buf) for buf in bufs])
             for i in range(len(bufs)):
                 ids, attn_masks, type_ids = bufs[i].export(device=self.device)
-                bs = len(bufs[i]) - len(crucial_blks[i])
+                bs = len(bufs[i]) - len(crucials[i])
                 # Make inputs by expand with different attention masks
                 ids = ids.view(1, -1).expand(bs, -1)
                 type_ids = type_ids.view(1, -1).expand(bs, -1)
@@ -115,23 +116,28 @@ class ReasonerModule(pl.LightningModule):
                         t += 1
                     blk_start = blk_end
                 assert t == bs
+                # ForkedPdb().set_trace()
                 # if bs > max_bs, we cannot feed the inputs directly.
                 losses = []
                 for j in range((bs - 1) // max_bs + 1): 
-                    l, r = max_bs * i, min(bs, max_bs * (i + 1))
-                    losses.append(self.reasoner(ids[l:r], attn_masks[l:r], type_ids[l:r], labels=label[l:r]))
+                    l, r = max_bs * j, min(bs, max_bs * (j + 1))
+                    result = self.reasoner(ids[l:r], attn_masks[l:r], type_ids[l:r], labels=label[l:r])
+                    result = result[0] if isinstance(result, tuple) else result
+                    losses.append(result)
                 losses_delta = torch.cat(losses, dim=0) - loss_reasoner[i]
                 # Label relevance
                 t = 0
                 for blk in bufs[i]:
                     if blk in crucials[i]:
-                        self._write_changes(blk, 'relevance', 2)
+                        pass
+                        # self._write_changes(blk, 'relevance', 3)
                     else:
                         if losses_delta[t] >= self.config.levelup_threshold and blk.relevance < 2: # TODO topk
                             self._write_changes(blk, 'relevance', blk.relevance + 1)
                         elif losses_delta[t] <= self.config.leveldown_threshold and blk.relevance > -1:
                             self._write_changes(blk, 'relevance', blk.relevance - 1)
                         t += 1
+                assert t == bs
 
     def training_step(self, bufs, batch_idx):
         # Make inputs for reasoner
@@ -140,10 +146,12 @@ class ReasonerModule(pl.LightningModule):
             buf.export(out=(inputs[0, i], inputs[1, i], inputs[2, i]))
         # Extract the labels for reasoner, e.g. start and end position for QA reasoner
         labels, crucials = self.reasoner.export_labels(bufs, self.device) # TODO A
-        loss_reasoner = self.reasoner(*inputs, labels=labels).mean()
+        result = self.reasoner(*inputs, labels=labels)
+        result = result[0] if isinstance(result, tuple) else result
+        loss_reasoner = result.mean()
         # Label the relevance by the current reasoner
         if self.config.latent:  
-            self._intervention(bufs, labels, crucials, loss_reasoner)
+            self._intervention(bufs, labels, crucials, result)
         tensorboard_logs = {'loss': loss_reasoner}
         return {'loss': loss_reasoner, 'log': tensorboard_logs}
 
@@ -153,4 +161,4 @@ class ReasonerModule(pl.LightningModule):
         parser.add_argument('--weight_decay2', type=float, default=0, help='weight decay of reasoner')
         parser.add_argument('--batch_size_reason_per_gpu', type=int, default=4, help='gradient batch_size')
         parser.add_argument('--levelup_threshold', type=float, default=0.2, help='gradient batch_size')
-        parser.add_argument('--leveldown_threshold', type=float, default=0, help='gradient batch_size')
+        parser.add_argument('--leveldown_threshold', type=float, default=-0.05, help='gradient batch_size')

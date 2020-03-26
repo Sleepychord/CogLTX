@@ -45,11 +45,10 @@ class BlkPosInterface:
     def apply_changes_from_file(self, filename):
         with open(filename, 'r') as fin:
             for line in fin:
-                tmp = line.split()
-                try:
-                    tmp[-1] = int(tmp[-1])
-                except ValueError as e:
-                    pass
+                tmp = [
+                    int(s) if s.isdigit() or s[0] == '-' and s[1:].isdigit() else s 
+                    for s in line.split()
+                ]
                 self.set_property(*tmp)
     def apply_changes_from_dir(self, tmp_dir):
         for shortname in os.listdir(tmp_dir):

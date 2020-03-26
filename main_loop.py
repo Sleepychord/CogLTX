@@ -23,14 +23,21 @@ from initialize_relevance import init_relevance
 
 def main_loop(config):
     os.makedirs(config.tmp_dir, exist_ok=True)
-    introspector = IntrospectorModule(config)
-    reasoner = ReasonerModule(config)
     qd_dataset = SimpleListDataset(config.train_source)
     interface = BlkPosInterface(qd_dataset)
     logger_intro = TensorBoardLogger(config.log_dir, name='introspector', version=config.version)
     logger_reason = TensorBoardLogger(config.log_dir, name='reasoner', version=config.version)
-    if config.latent:
-        init_relevance(qd_dataset)
+    if config.init_relevance != '':
+        if hasattr(config, 'conditional_transforms'):
+            ct = config.conditional_transforms
+            del config.conditional_transforms
+        else:
+            ct = []
+        init_relevance(qd_dataset, method=config.init_relevance, conditional_transforms=ct)
+
+    introspector = IntrospectorModule(config)
+    reasoner = ReasonerModule(config)   
+
     def _create_new_trainer(epoch, logger):
         return Trainer(max_epochs=epoch, 
             gpus=config.gpus, 
@@ -65,7 +72,7 @@ def prediction(config):
     with torch.no_grad():
         for qbuf, dbuf in tqdm(qd_dataset):
             # pdb.set_trace()
-            buf, relevance_score = mem_replay(intro_model.introspector, qbuf, dbuf, device=device) # TODO times hyperparam
+            buf, relevance_score = mem_replay(intro_model.introspector, qbuf, dbuf, times=config.times, device=device) # TODO times hyperparam
             inputs = [t.unsqueeze(0) for t in buf.export(device=device)]
             output = reason_model.reasoner(*inputs)
             yield qbuf, dbuf, buf, relevance_score, inputs[0][0], output
@@ -84,8 +91,12 @@ def main_parser(parser=None):
     parser.add_argument('--step_size', type=int, default=20000, help='the version to save or restore')
 
     parser.add_argument('--num_samples', type=str, default='2,1,3', help='num of continous, discrete random samples and promising samples')
+    parser.add_argument('--times', type=str, default='3,5', help='memreplay times')
+
     parser.add_argument('--batch_size_inference', type=int, default=8, help='batch_size in memreplay')
+
     parser.add_argument('--latent', action='store_true', help='without relevance labels')
+    parser.add_argument('--init_relevance', type=str, default='', help='bm25 or glove')
 
     parser.add_argument("--gpus", type=int, nargs='+', required=True, help="available gpus")
     parser.add_argument('--train_source', type=str, help='training dataset')

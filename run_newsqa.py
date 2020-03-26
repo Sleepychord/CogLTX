@@ -49,7 +49,7 @@ if __name__ == "__main__":
     print('=====================================')
     root_dir = os.path.abspath(os.path.dirname(__file__))
     parser = ArgumentParser(add_help=False)
-    # ------------ add hotpotqa argument ----------
+    # ------------ add dataset-specific argument ----------
     parser.add_argument('--only_predict', action='store_true')
     # ---------------------------------------------
     parser = main_parser(parser)

@@ -4,6 +4,7 @@ from transformers import AutoTokenizer
 from utils import CAPACITY, BLOCK_SIZE, DEFAULT_MODEL_NAME
 import random
 from bisect import bisect_left
+from itertools import chain
 class Block:
     tokenizer = AutoTokenizer.from_pretrained(DEFAULT_MODEL_NAME)
     def __init__(self, ids, pos, blk_type=1, **kwargs):
@@ -40,9 +41,7 @@ class Buffer:
         if hard:
             for sid, tsen in enumerate(d):
                 psen = properties[sid] if properties is not None else []
-                # if len(tsen) == 0:
-                #     print(d)
-                num = updiv(len(tsen), BLOCK_SIZE - 1) # cls
+                num = updiv(len(tsen), BLOCK_SIZE) # cls
                 bsize = updiv(len(tsen), num)
                 for i in range(num):
                     st, en = i * bsize, min((i + 1) * bsize, len(tsen))
@@ -60,7 +59,57 @@ class Buffer:
                             raise ValueError('Invalid property {}'.format(p))
                     ret.insert(Block(tokenizer.convert_tokens_to_ids(tmp), cnt, **tmp_kwargs))
         else:
-            raise NotImplementedError
+            # d is only a list of tokens, not split. 
+            # properties are also a list of tuples.
+            end_tokens = {'\n':0, '.':1, '?':1, '!':1, ',':2}
+            for k, v in list(end_tokens.items()):
+                end_tokens['Ġ' + k] = v
+            sen_cost, break_cost = 4, 8
+            poses = [(i, end_tokens[tok]) for i, tok in enumerate(d) if tok in end_tokens]
+            poses.insert(0, (-1, 0))
+            if poses[-1][0] < len(d) - 1:
+                poses.append((len(d) - 1, 0))
+            x = 0
+            while x < len(poses) - 1:
+                if poses[x + 1][0] - poses[x][0] > BLOCK_SIZE:
+                    poses.insert(x + 1, (poses[x][0] + BLOCK_SIZE, break_cost))
+                x += 1
+            # simple dynamic programming
+            best = [(0, 0)]
+            for i, (p, cost) in enumerate(poses):
+                if i == 0:
+                    continue    
+                best.append((-1, 100000))
+                for j in range(i-1, -1, -1):
+                    if p - poses[j][0] > BLOCK_SIZE:
+                        break
+                    value = best[j][1] + cost + sen_cost
+                    if value < best[i][1]:
+                        best[i] = (j, value)
+                assert best[i][0] >= 0
+            intervals, x = [], len(poses) - 1
+            while x > 0:
+                l = poses[best[x][0]][0 ]
+                intervals.append((l + 1, poses[x][0] + 1))
+                x = best[x][0]
+            if properties is None:
+                properties = []
+            for st, en in reversed(intervals):
+                # copy from hard version
+                cnt += 1
+                tmp = d[st: en] + [tokenizer.sep_token]
+                # inject properties into blks
+                tmp_kwargs = {}
+                for p in properties:
+                    if len(p) == 2:
+                        tmp_kwargs[p[0]] = p[1]
+                    elif len(p) == 3:
+                        if st <= p[1] < en:
+                            tmp_kwargs[p[0]] = (p[1] - st, p[2])
+                    else:
+                        raise ValueError('Invalid property {}'.format(p))
+                ret.insert(Block(tokenizer.convert_tokens_to_ids(tmp), cnt, **tmp_kwargs))
+
         return ret, cnt
 
     def __init__(self):
@@ -216,4 +265,24 @@ def buffer_collate(batch): # does not collate
     return batch
 
 if __name__ == "__main__":
-    pass
+    s = """I just recently realized that I am bisexual, and also just recently returned to religion, and have a good friend who has pointed out to me that homosexuality is a sin in the bible.  Well, I don't see how it could be considered a sin,
+First of all as far as I know, only male homosexuality is explicitly
+mentioned in the bibles, so you're off the hook there, I think. In
+any event, there are *plenty* of people in many denominations who
+do not consider a person's sexual identification of gay/lesbian/bisexual
+as an "immoral lifestyle choice"
+Also, I have always been a somewhat liberal feminist, and am pro-choice, and it seems that being pro-choice and being religious don't mix either.  I am told
+This is another misconception. You are not being told the whole story.
+My former minister is a lesbian, and I know personally and
+professionally several openly gay and lesbian ministers. I am
+a Unitarian-Universalist and like most others in my denomination,
+am pro-choice. You needn't go looking to the Unitarian Universalists
+(which is a liberal religion) for acceptance of your sexual
+identification and pro-choice views, however; there are many of us
+who believe in spirituality AND freedom of conscience.
+Good Luck on your journey! ADDFSDFDE*(YT(*HO*E))DHF(NKLSHDFDFSFLFJDKSFKSHOFEINLIDS)*Y&(*&(23423534twer54324524)245)4353453777777777777777777777777777777777777777777777777777777777777777777777777777777
+4353453777777777777777777777777777777777777777777777777777777777777777777777777777777
+"""
+    from transformers import AutoModel, AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained('roberta-base')
+    Buffer.split_document_into_blocks(tokenizer.tokenize(s), tokenizer, hard=False)
