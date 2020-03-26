@@ -105,6 +105,8 @@ class BlkPosInterface:
             estimations = torch.tensor([blk.estimation for blk in nbuf], dtype=torch.long)
             keeped_indices = estimations.argsort(descending=True)[:n2 * lb]
             selected_nblks = [blk for i, blk in enumerate(nbuf) if i in keeped_indices]
+            while 0 < len(selected_nblks) < n2 * lb:
+                selected_nblks = selected_nblks * (n2 * lb // len(selected_nblks) + 1)
             for i in range(n2):
                 buf = Buffer()
                 buf.blocks = qbuf.blocks + pbuf.blocks + selected_nblks[i * lb: (i+1) * lb]
