@@ -61,7 +61,7 @@ def main_loop(config):
         reasoner.set_dataset(reason_dataset)
         trainer = _create_new_trainer(epoch + 1, logger_reason)
         trainer.fit(reasoner)
-        if config.latent:
+        if config.latent and epoch > 1:
             interface.apply_changes_from_dir(config.tmp_dir)
 
 def prediction(config):
