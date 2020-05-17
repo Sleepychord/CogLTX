@@ -90,7 +90,7 @@ def main_parser(parser=None):
     parser.add_argument('--version', type=int, default=0, help='the version to save or restore')
     parser.add_argument('--step_size', type=int, default=20000, help='the version to save or restore')
 
-    parser.add_argument('--num_samples', type=str, default='2,1,3', help='num of continous, discrete random samples and promising samples')
+    parser.add_argument('--num_samples', type=str, default='1,1,1,1', help='num of continous, discrete random samples and promising samples')
     parser.add_argument('--times', type=str, default='3,5', help='memreplay times')
 
     parser.add_argument('--batch_size_inference', type=int, default=8, help='batch_size in memreplay')

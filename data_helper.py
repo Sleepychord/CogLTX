@@ -93,7 +93,8 @@ class BlkPosInterface:
         return SimpleListDataset(ret)
 
     def build_promising_buffer(self, num_samples):
-        n2, ret = int(num_samples.split(',')[2]), []
+        n2, n3 = [int(x) for x in num_samples.split(',')][2:]
+        ret = []
         max_blk_num = CAPACITY // (BLOCK_SIZE + 1)
         logging.info('building buffers for reasoning...')
         for qbuf, dbuf in tqdm(self.dataset):
@@ -110,6 +111,10 @@ class BlkPosInterface:
             for i in range(n2):
                 buf = Buffer()
                 buf.blocks = qbuf.blocks + pbuf.blocks + selected_nblks[i * lb: (i+1) * lb]
+                ret.append(buf.sort_())
+            for i in range(n3):
+                buf = Buffer()
+                buf.blocks = qbuf.blocks + pbuf.blocks + random.sample(nbuf.blocks, min(len(nbuf), lb))
                 ret.append(buf.sort_())
         return SimpleListDataset(ret)
 
