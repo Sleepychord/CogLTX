@@ -164,7 +164,7 @@ class Buffer:
                 ret.blocks.append(self.blocks[t1])
                 t1 += 1
             else:
-                ret.blocks.append(self.blocks[t2])
+                ret.blocks.append(buf.blocks[t2])
                 t2 += 1
         return ret
     
