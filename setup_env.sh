@@ -1,7 +1,3 @@
-# local
-# ssh-copy-id -i ~/.ssh/id_rsa.pub  mingding@192.168.x.xxx (-p 12345)
-# vim ~/.ssh/config
-
 echo "Starting Anaconda setup"
 echo "Installing Miniconda"
 wget -c https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
@@ -17,4 +13,4 @@ conda init bash
 
 source activate flyback
 pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
-pip install numpy torch==1.3.1 torchvision==0.4.2 transformers pytorch-lightning gpustat gensim ujson fuzzywuzzy
+pip install numpy torch==1.3.1 torchvision==0.4.2 transformers pytorch-lightning==0.6 gpustat gensim ujson fuzzywuzzy
