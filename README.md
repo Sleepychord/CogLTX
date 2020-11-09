@@ -19,7 +19,7 @@ The preprocess is different for different types of data, but in general can be s
 
 See the folders (`newsqa  hotpotqa  20news`) for details.
 ## Running
-To train CogLTX on a specific task, we need write an entry like `run\_newsqa.py, run\_hotpotqa.py, run_20news.py`, which includes the configuration, postprocess and evaluation. 
+To train CogLTX on a specific task, we need write an entry like `run_newsqa.py, run_hotpotqa.py, run_20news.py`, which includes the configuration, postprocess and evaluation. 
 
 ## Others
 The data of NewsQA, hotpotQA and 20news can be found in the original dataset paper, but we do not release the codes and data about Alibaba due to commercial reasons. 
